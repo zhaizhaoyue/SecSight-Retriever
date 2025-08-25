@@ -1,0 +1,118 @@
+# Financial metric mapping (aliases/regex → canonical metric)
+# Used by table_normalize.py to standardize row labels across filings.
+
+__meta__:
+  version: 0.2
+  match:
+    # matching strategy guidance for your cleaner (not code-executed by YAML, but read by your script)
+    normalize: [lower, collapse_spaces, strip, remove_colon]   # preprocessing steps for raw labels
+    mode: alias_or_regex_icase                                  # case-insensitive matching
+  notes: |
+    - Keep canonical names stable; extend aliases over time.
+    - If a metric is normally negative in tables (parentheses), set sign_convention: negative_means_outflow.
+
+income_statement:
+  revenue_total:
+    aliases: ["Revenue", "Net Sales", "Sales", "Total Revenue"]
+    regex: ["^net\\s+sales$", "^total\\s+revenue$"]
+    description: Total operating revenue
+  cogs:
+    aliases: ["Cost of Goods Sold", "Cost of sales", "COGS"]
+    regex: ["^cost\\s+of\\s+(goods|sales)\\b"]
+    description: Cost of goods sold
+  gross_profit:
+    aliases: ["Gross Profit", "Total Gross Profit"]
+    compute_from: ["revenue_total - cogs"]     # optional hint for checks
+  r_and_d_expense:
+    aliases: ["Research and development", "R&D expense"]
+  sga_expense:
+    aliases: ["Selling, general and administrative", "SG&A"]
+    regex: ["selling.*general.*administrative"]
+  operating_expenses_total:
+    aliases: ["Total operating expenses"]
+  operating_income:
+    aliases: ["Operating Income", "Income from operations", "EBIT"]
+    description: Operating profit (EBIT)
+  interest_expense:
+    aliases: ["Interest expense", "Interest and other, net"]
+    sign_convention: negative_means_outflow
+  other_income_expense_net:
+    aliases: ["Other income (expense), net", "Non-operating income (expense)"]
+  income_before_tax:
+    aliases: ["Income before income taxes", "Earnings before income taxes", "EBT"]
+  income_tax_expense:
+    aliases: ["Provision for income taxes", "Income tax expense"]
+    sign_convention: negative_means_outflow
+  net_income:
+    aliases: ["Net income", "Net earnings", "Profit attributable to shareholders"]
+  eps_basic:
+    aliases: ["Earnings per share (basic)", "Basic EPS", "EPS (Basic)"]
+  eps_diluted:
+    aliases: ["Earnings per share (diluted)", "Diluted EPS", "EPS (Diluted)"]
+
+balance_sheet:
+  cash_and_cash_equivalents:
+    aliases: ["Cash and cash equivalents", "Cash & cash equivalents"]
+  short_term_investments:
+    aliases: ["Short-term marketable securities", "Short-term investments"]
+  accounts_receivable_net:
+    aliases: ["Accounts receivable, net", "Trade receivables, net"]
+  inventory:
+    aliases: ["Inventories", "Inventory"]
+  current_assets_total:
+    aliases: ["Total current assets"]
+  ppe_net:
+    aliases: ["Property, plant and equipment, net", "PP&E, net"]
+  intangible_assets:
+    aliases: ["Intangible assets, net"]
+  goodwill:
+    aliases: ["Goodwill"]
+  total_assets:
+    aliases: ["Total assets", "Assets"]
+  accounts_payable:
+    aliases: ["Accounts payable", "Trade payables"]
+  short_term_debt:
+    aliases: ["Short-term borrowings", "Current portion of long-term debt"]
+  current_liabilities_total:
+    aliases: ["Total current liabilities"]
+  long_term_debt:
+    aliases: ["Long-term debt", "Non-current borrowings"]
+  total_debt:
+    compute_from: ["short_term_debt + long_term_debt"]
+  total_liabilities:
+    aliases: ["Total liabilities", "Liabilities"]
+  shareholders_equity:
+    aliases: ["Total equity", "Shareholders’ equity", "Stockholders’ equity", "Equity"]
+  noncontrolling_interests:
+    aliases: ["Noncontrolling interests", "Minority interests"]
+
+cash_flow:
+  net_cash_from_operating_activities:
+    aliases: ["Net cash provided by operating activities", "Operating cash flow"]
+  capital_expenditures:
+    aliases: ["Capital expenditures", "Purchase of property and equipment", "Payments for property and equipment", "CapEx"]
+    sign_convention: negative_means_outflow
+  net_cash_from_investing_activities:
+    aliases: ["Net cash used in investing activities", "Net cash provided by investing activities"]
+  net_cash_from_financing_activities:
+    aliases: ["Net cash used in financing activities", "Net cash provided by financing activities"]
+  dividends_paid:
+    aliases: ["Dividends paid", "Cash dividends paid"]
+    sign_convention: negative_means_outflow
+  share_repurchases:
+    aliases: ["Repurchases of common stock", "Share buybacks", "Treasury stock purchases"]
+    sign_convention: negative_means_outflow
+  stock_based_compensation:
+    aliases: ["Stock-based compensation", "Share-based compensation", "SBC"]
+  free_cash_flow:
+    compute_from: ["net_cash_from_operating_activities - capital_expenditures"]
+    note: Derived metric, may not be a native table line.
+
+# Optional group for ratios if they appear as rows in management metrics/summary tables.
+ratios_optional:
+  gross_margin:
+    compute_from: ["gross_profit / revenue_total"]
+  operating_margin:
+    compute_from: ["operating_income / revenue_total"]
+  net_margin:
+    compute_from: ["net_income / revenue_total"]

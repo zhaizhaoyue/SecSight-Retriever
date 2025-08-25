@@ -1,0 +1,46 @@
+# ======================
+# Python 相关
+# ======================
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.pkl
+*.log
+
+# 虚拟环境
+.venv/
+env/
+venv/
+
+# Jupyter Notebook 缓存
+.ipynb_checkpoints/
+
+# IDE / 编辑器配置
+.vscode/
+.idea/
+
+# ======================
+# 数据文件
+# ======================
+
+# 忽略原始 SEC EDGAR 抓取的大文件
+data/raw_reports/
+
+# 如果你希望忽略整个 raw_reports 文件夹，可以写：
+# data/raw_reports/*
+
+# 但保留标准化/处理后的数据
+data/processed/
+!data/qa/
+
+# ======================
+# 其他
+# ======================
+# 临时或辅助文件
+*.DS_Store
+*.bak
+*.swp
+
+# 如果有 Docker 相关中间产物
+*.tar

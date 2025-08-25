@@ -1,10 +1,16 @@
-defaults:
-  random_seed: 42          # 随机种子，保证结果可复现
-  chunk_size: 800          # 文本切块大小（做 embedding 前）
-  chunk_overlap: 80        # 切块之间的重叠字符数
-  top_k: 4                 # RAG 检索时返回的文档数量
+paths:
+  processed_dir: data/processed       # 输入目录（阶段1生成的 txt/jsonl 和表格）
+  clean_dir: data/clean               # 输出目录（阶段2清洗后的文件）
+  mappings_dir: data/mappings         # 存放指标映射表 metric_map.yaml
 
-  data_dir: ${env:DATA_DIR}        # 数据目录（默认 data/，也可以用环境变量覆盖）
-  index_path: ${env:FAISS_INDEX_PATH}   # 向量索引文件存放位置
-  embed_model: ${env:EMBED_MODEL}       # 默认使用的 embedding 模型
-  finbert_model: ${env:FINBERT_MODEL}   # 财经情绪分析模型
+text_clean:
+  min_chars: 30                       # 最短保留句子长度（除非含数字/百分比）
+  pattern: text.jsonl                 # 匹配的文件名，递归查找
+
+table_clean:
+  metric_map: data/mappings/metric_map.yaml   # 财务科目映射表
+  default_currency: USD
+  default_scale: 1                     # 默认单位（1=原始值, 1e6=百万）
+
+qa:
+  max_answers: 3                      # QA 模块一次返回多少候选答案
