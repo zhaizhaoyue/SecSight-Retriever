@@ -25,7 +25,7 @@ log = logging.getLogger(__name__)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DEFAULT_CONFIG_PATH = PROJECT_ROOT / "configs" / "config.yaml"
 DEFAULT_INPUT_DIR   = PROJECT_ROOT / "data" / "processed"
-DEFAULT_OUTPUT_DIR  = PROJECT_ROOT / "data" / "clean_raw"
+DEFAULT_OUTPUT_DIR  = PROJECT_ROOT / "data" / "clean"
 
 DEFAULT_MAX_SENT_LEN  = 2000
 DEFAULT_HARD_WRAP_LEN = 2800

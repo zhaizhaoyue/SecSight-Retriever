@@ -28,6 +28,21 @@ RE_MULTI_SPACE = re.compile(r"[ \t]+")
 # 标准文件名：US_{ticker}_{year}_{form}_{accno}.{ext}
 NAME_RE = re.compile(r"^US_(.+?)_(\d{4})_(10-[KQ])_(.+)\.(.+)$", re.I)
 ACCNO_RE = re.compile(r"(\d{10}-\d{2}-\d{6})")
+FNAME_RE = re.compile(
+    r"""
+    ^
+    (?:US_)?                                   # optional leading 'US_'
+    (?P<ticker>[A-Z]{1,10})_                   # ticker
+    (?P<year>\d{4})_                           # year in filename
+    (?P<form>10\-K|10\-Q|20\-F|40\-F|8\-K)     # form
+    _(?P<accno>\d{10}\-\d{2}\-\d{6})           # accession
+    (?:_(?P<ticker2>[a-z0-9\-]+))?             # sometimes ticker repeats lower-case
+    _(?P<docdate>\d{8})                        # e.g. 20230930
+    (?:[._]\w+)?                               # ← 允许 ".xxx" 或 "_xxx"（修复点）
+    \.(?P<ext>xml|html)$                       # 简化：最终扩展名
+    """,
+    re.X | re.I,
+)
 
 def normalize_accno(s: str) -> str:
     m = ACCNO_RE.search(s)

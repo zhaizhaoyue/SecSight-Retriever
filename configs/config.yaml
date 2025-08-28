@@ -1,6 +1,6 @@
 paths:
   processed_dir: data/processed
-  clean_dir: data/clean_raw
+  clean_dir: data/clean
   mappings_dir: data/mappings
 
 text_clean:
@@ -16,3 +16,14 @@ table_clean:
 
 qa:
   max_answers: 3
+
+project_root: ${project_root}
+
+data:
+  standard: ${project_root}/data/raw_reports/standard # 你的 iXBRL/XBRL 文件目录
+  parsed:   ${project_root}/data/processed         # 解析输出根目录
+  facts:  ${project_root}/data/processed        # facts 子目录
+
+files:
+  facts_parquet: facts.parquet
+  facts_csv: facts.csv
