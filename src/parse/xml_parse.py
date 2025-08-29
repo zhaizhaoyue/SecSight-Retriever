@@ -640,7 +640,6 @@ def main():
             continue
         if df.empty:
             continue
-
         # ========== Silver → Gold 轻加工：数值与维度归档 ==========
         # 4.1 value_num_clean：可计算的 float（百分比自动 /100）
         df["value_num_clean"] = df.apply(

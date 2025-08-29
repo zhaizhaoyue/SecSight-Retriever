@@ -61,28 +61,100 @@ def mirror_out_dir(in_file: Path, in_root: Path, out_root: Path) -> Path:
 # -----------------------
 # labels 优选（英文优先；standard > terse > verbose）
 # -----------------------
-ROLE_PRI = [
-    "http://www.xbrl.org/2003/role/label",        # standard
-    "http://www.xbrl.org/2003/role/terseLabel",   # terse
-    "http://www.xbrl.org/2003/role/verboseLabel", # verbose
-]
+# -----------------------
+# labels 优选（角色/语言归一 + 最佳挑选）
+# -----------------------
+ROLE_PRIORITY = ["standard", "terse", "total", "verbose", "documentation"]
+ROLE_MAP = {
+    "http://www.xbrl.org/2003/role/label": "standard",
+    "http://www.xbrl.org/2003/role/terseLabel": "terse",
+    "http://www.xbrl.org/2003/role/verboseLabel": "verbose",
+    "http://www.xbrl.org/2003/role/documentation": "documentation",
+    "http://www.xbrl.org/2003/role/totalLabel": "total",
+}
+LANG_PRIORITY = ["en-US", "en", "en-GB", "zh", "nl"]
+LANG_NORM = {
+    "en": "en", "en-us": "en-US", "en-gb": "en-GB",
+    "zh": "zh", "zh-cn": "zh", "nl": "nl",
+}
 
-def build_preferred_labels(labels_df: pd.DataFrame) -> pd.DataFrame:
+def norm_role(role_uri: Optional[str]) -> str:
+    if not role_uri:
+        return "standard"
+    return ROLE_MAP.get(role_uri, role_uri.rsplit("/", 1)[-1])
+
+def norm_lang(lang: Optional[str]) -> Optional[str]:
+    if not lang:
+        return None
+    t = str(lang).strip().lower()
+    return LANG_NORM.get(t, lang)
+
+def to_tokens(txt: Optional[str]) -> Optional[str]:
+    if txt is None:
+        return None
+    if isinstance(txt, float) and np.isnan(txt):
+        return None
+    t = re.sub(r"[^\w\s\-/%]+", " ", str(txt).lower()).strip()
+    return re.sub(r"\s+", " ", t) or None
+
+
+def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """
+    输入：长表 labels_df（含 concept, label_text, label_role, lang, 以及 ticker/fy/form/accno）
+    输出：
+      - best_df：每 concept 一行（附 label_best/_role/_lang/_search_tokens）
+      - wide_df：role×lang 展开后的宽表（便于展示/检索）
+    """
     if labels_df.empty or "concept" not in labels_df.columns:
-        return pd.DataFrame(columns=["concept","label_text"])
-    def _role_rank(x):
-        try: return ROLE_PRI.index(x)
-        except Exception: return len(ROLE_PRI)
-    labels_df = labels_df.copy()
-    labels_df["role_rank"] = labels_df.get("label_role", "").apply(_role_rank)
-    labels_df["lang_rank"] = labels_df.get("lang", "").apply(
-        lambda x: 0 if str(x).lower().startswith("en") else 1
+        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_search_tokens"]
+        cols_wide = ["ticker","fy","form","accno","concept"]
+        return pd.DataFrame(columns=cols_best), pd.DataFrame(columns=cols_wide)
+
+    lab = labels_df.copy()
+    if "label_role" not in lab.columns:
+        lab["label_role"] = "standard"
+    if "lang" not in lab.columns:
+        lab["lang"] = pd.NA
+    lab["label_role"] = lab["label_role"].apply(norm_role)
+    lab["lang"] = lab["lang"].apply(norm_lang)
+
+
+    # 排序权重
+    role_rank = {r:i for i, r in enumerate(ROLE_PRIORITY)}
+    lang_rank = {l:i for i, l in enumerate(LANG_PRIORITY)}
+    lab["__role_rk"] = lab["label_role"].map(lambda x: role_rank.get(x, 999))
+    lab["__lang_rk"] = lab["lang"].map(lambda x: lang_rank.get(x, 999) if pd.notna(x) else 500)
+
+    # best：按 role/语言优先取第一条
+    def _pick(g: pd.DataFrame) -> pd.Series:
+        g2 = g.sort_values(["__role_rk","__lang_rk"])
+        top = g2.iloc[0]
+        return pd.Series({
+            "label_best": top["label_text"],
+            "label_best_role": top.get("label_role"),
+            "label_best_lang": top.get("lang"),
+        })
+
+    group_cols = ["ticker","fy","form","accno","concept"]
+    best_df = (
+        lab.groupby(group_cols, dropna=False)
+           .apply(_pick, include_groups=False)
+           .reset_index()
     )
-    pref = (labels_df
-            .sort_values(["concept","role_rank","lang_rank"])
-            .groupby("concept", as_index=False)
-            .first()[["concept","label_text"]])
-    return pref
+    best_df["label_search_tokens"] = best_df["label_best"].apply(to_tokens)
+
+    # wide：role×lang 展开为列，如 label_standard_en、label_terse_en-US
+    lab["lang_safe"] = lab["lang"].fillna("none")
+    lab["colkey"] = "label_" + lab["label_role"].astype(str) + "_" + lab["lang_safe"].astype(str)
+    wide_df = lab.pivot_table(
+        index=group_cols,
+        columns="colkey",
+        values="label_text",
+        aggfunc=lambda x: sorted(set([t for t in x if pd.notna(t) and str(t).strip()]))[0] if len(x) > 0 else None
+    ).reset_index()
+
+
+    return best_df, wide_df
 
 # -----------------------
 # 清洗：calculation_edges
@@ -100,6 +172,11 @@ def clean_calculation_edges(df: pd.DataFrame) -> pd.DataFrame:
         try: return float(x)
         except Exception: return np.nan
     df["weight"] = df["weight"].apply(_to_float)
+    df["order"]  = df["order"].apply(_to_float)
+
+    for col in ["year", "fy"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
     # 去重
     keep = ["parent_concept","child_concept","weight","order","linkrole",
             "ticker","year","fy","fq","form","accno","doc_date","file_type","source_path"]
@@ -124,11 +201,13 @@ def clean_definition_arcs(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------
 # 清洗：labels（输入 labels.parquet / labels.jsonl → 输出优选映射）
 # -----------------------
-def clean_labels(df: pd.DataFrame) -> pd.DataFrame:
+def clean_labels(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df.empty:
-        return pd.DataFrame(columns=["concept","label_text"])
-    pref = build_preferred_labels(df)
-    return pref
+        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_search_tokens"]
+        cols_wide = ["ticker","fy","form","accno","concept"]
+        return pd.DataFrame(columns=cols_best), pd.DataFrame(columns=cols_wide)
+    best_df, wide_df = build_preferred_labels(df)
+    return best_df, wide_df
 
 # -----------------------
 # 主逻辑
@@ -198,14 +277,29 @@ def main():
         try:
             print(f"[labs {i}/{len(files_lab)}] {p}")
             raw = read_table(p)
-            cleaned = clean_labels(raw)  # 只保留 concept,label_text
+            best_df, wide_df = clean_labels(raw)
             out_dir = mirror_out_dir(p, in_root, out_root)
             if args.dry_run:
-                print(f"    -> dry-run rows={len(cleaned)} dir={out_dir}")
+                print(f"    -> dry-run best_rows={len(best_df)} wide_rows={len(wide_df)} dir={out_dir}")
                 continue
-            ok = try_write_parquet(cleaned, out_dir / "labels.parquet")
-            save_jsonl(cleaned, out_dir / "labels.jsonl")
-            print(f"    -> 输出：{'labels.parquet, ' if ok else ''}labels.jsonl  rows={len(cleaned)}  dir={out_dir}")
+
+            # 写 best
+            ok1 = try_write_parquet(best_df, out_dir / "labels_best.parquet")
+            save_jsonl(best_df, out_dir / "labels_best.jsonl")
+
+            # 写 wide（可选：如果为空仍写空文件，目录结构更稳定）
+            ok2 = try_write_parquet(wide_df, out_dir / "labels_wide.parquet")
+            save_jsonl(wide_df, out_dir / "labels_wide.jsonl")
+
+            # 兼容：labels.* 等同 best（方便你之前的 join 逻辑）
+            ok3 = try_write_parquet(best_df, out_dir / "labels.parquet")
+            save_jsonl(best_df, out_dir / "labels.jsonl")
+
+            print(f"    -> 输出："
+                f"{'labels_best.parquet, ' if ok1 else ''}labels_best.jsonl; "
+                f"{'labels_wide.parquet, ' if ok2 else ''}labels_wide.jsonl; "
+                f"{'labels.parquet, ' if ok3 else ''}labels.jsonl  dir={out_dir}")
+
         except Exception as e:
             print(f"    [WARN] 失败：{p}\n{e}")
 

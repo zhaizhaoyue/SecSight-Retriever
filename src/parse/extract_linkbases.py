@@ -202,32 +202,65 @@ def _loc_map(linknode: etree._Element) -> Dict[str, str]:
             locs[lab] = norm
     return locs
 
-def parse_labels(lab_xml: Path) -> pd.DataFrame:
+from typing import Dict, List, Tuple, Any, Optional  # 顶部已导入 Tuple
+
+# ...
+
+def parse_labels(lab_xml: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     tree = _parse_xml(lab_xml)
     rows: List[Dict[str, Any]] = []
     meta = sniff_meta(lab_xml)
 
+    ROLE_MAP = {
+        "http://www.xbrl.org/2003/role/label": "standard",
+        "http://www.xbrl.org/2003/role/terseLabel": "terse",
+        "http://www.xbrl.org/2003/role/documentation": "documentation",
+        "http://www.xbrl.org/2003/role/verboseLabel": "verbose",
+        "http://www.xbrl.org/2003/role/totalLabel": "total",
+        "http://www.xbrl.org/2009/role/negatedLabel": "negated",
+    }
+
+    LANG_NORM = {
+        "en-us": "en-US",
+        "en-gb": "en-GB",
+        "zh-cn": "zh",
+        "zh": "zh",
+        "nl": "nl",
+        "en": "en",
+    }
+    LANG_PRIORITY = ["en", "en-US", "en-GB", "zh", "nl"]
+
+    def norm_role(uri: Optional[str]) -> str:
+        if not uri:
+            return "standard"
+        return ROLE_MAP.get(uri, uri.rsplit("/", 1)[-1])
+
+    def norm_lang(lang: Optional[str]) -> Optional[str]:
+        if not lang:
+            return None
+        t = str(lang).strip().lower()        # ← 这里包一层 str()
+        return LANG_NORM.get(t, lang)
+
     for lblink in tree.findall(".//link:labelLink", namespaces=NSMAP):
         linkrole = lblink.get(f"{{{NSMAP['xlink']}}}role")
-        locs = _loc_map(lblink)
+        locs = _loc_map(lblink)              # ← 只算一次
 
-        # label resources
         res_by_label: Dict[str, Dict[str, Any]] = {}
         for lab in lblink.findall(".//link:label", namespaces=NSMAP):
             res_label = lab.get(f"{{{NSMAP['xlink']}}}label")
-            role      = lab.get(f"{{{NSMAP['xlink']}}}role")
-            lang      = lab.get("{http://www.w3.org/XML/1998/namespace}lang")
+            role_uri  = lab.get(f"{{{NSMAP['xlink']}}}role") or lab.get("role")
+            role      = norm_role(role_uri)
+            lang      = norm_lang(lab.get("{http://www.w3.org/XML/1998/namespace}lang"))
             text      = (lab.text or "").strip()
             if res_label:
                 res_by_label[res_label] = {"role": role, "lang": lang, "text": text}
 
-        # arcs: from concept locator -> to label resource
         for arc in lblink.findall(".//link:labelArc", namespaces=NSMAP):
             src = arc.get(f"{{{NSMAP['xlink']}}}from")
             dst = arc.get(f"{{{NSMAP['xlink']}}}to")
-            if not src or not dst: 
+            if not src or not dst:
                 continue
-            concept = locs.get(src)
+            concept = locs.get(src)          # ← 用缓存的 locs
             res     = res_by_label.get(dst)
             if not concept or not res:
                 continue
@@ -239,7 +272,58 @@ def parse_labels(lab_xml: Path) -> pd.DataFrame:
                 "linkrole": linkrole,
                 **meta,
             })
-    return pd.DataFrame(rows)
+
+    long_df = pd.DataFrame(rows)
+    if long_df.empty:
+        return long_df, pd.DataFrame()
+
+    ROLE_PRIORITY = ["terse", "standard", "total", "verbose", "documentation"]
+    role_rank = {r:i for i, r in enumerate(ROLE_PRIORITY)}
+    lang_rank = {l:i for i, l in enumerate(LANG_PRIORITY)}
+
+    def best_label_for_group(g: pd.DataFrame) -> pd.Series:
+        g = g.copy()
+        g["role_rk"] = g["label_role"].map(lambda x: role_rank.get(x, 999))
+        g["lang_rk"] = g["lang"].map(lambda x: lang_rank.get(x, 999) if pd.notna(x) else 500)
+        g = g.sort_values(["role_rk","lang_rk"])
+        top = g.iloc[0]
+        return pd.Series({
+            "label_best": top["label_text"],
+            "label_best_role": top["label_role"],
+            "label_best_lang": top["lang"],
+        })
+
+    best_df = (
+        long_df
+        .groupby(["ticker","fy","form","accno","concept"], dropna=False)
+        .apply(best_label_for_group, include_groups=False)
+        .reset_index()
+    )
+
+    long_df["lang_safe"] = long_df["lang"].fillna("none")
+    long_df["colkey"] = "label_" + long_df["label_role"].astype(str) + "_" + long_df["lang_safe"].astype(str)
+    wide_df = long_df.pivot_table(
+        index=["ticker","fy","form","accno","concept"],
+        columns="colkey",
+        values="label_text",
+        aggfunc=lambda x: sorted(set([t for t in x if t]))[0] if len(x)>0 else None
+    ).reset_index()
+
+    labels_wide = pd.merge(wide_df, best_df, on=["ticker","fy","form","accno","concept"], how="left")
+
+    def to_tokens(txt: Optional[str]) -> Optional[str]:
+        if not txt:
+            return None
+        t = re.sub(r"[^\w\s\-/%]+", " ", str(txt).lower()).strip()
+        t = re.sub(r"\s+", " ", t)
+        return t
+
+    labels_wide["label_search_tokens"] = labels_wide["label_best"].apply(to_tokens)
+
+    return long_df, labels_wide
+
+
+
 
 def parse_calculation(cal_xml: Path) -> pd.DataFrame:
     tree = _parse_xml(cal_xml)
@@ -335,25 +419,60 @@ def main():
     print(f"[scan] labs={len(labs)}, cals={len(cals)}, defs={len(defs)}, pres={len(pres)} in {indir}")
 
     # --- labels ---
-# --- labels ---
+    # --- labels ---
+    # --- labels ---
     if labs:
-        dfs = []
+        dfs: List[pd.DataFrame] = []
+        wides: List[pd.DataFrame] = []
         for f in labs:
             try:
-                df = parse_labels(f)
-                if not df.empty:
-                    dfs.append(df)
-                print(f"[ok][lab] {f.name}: {len(df)} labels")
+                long_df, wide_df = parse_labels(f)
+                if not long_df.empty:
+                    dfs.append(long_df)
+                if wide_df is not None and not wide_df.empty:
+                    wides.append(wide_df)
+                print(f"[ok][lab] {f.name}: {len(long_df)} labels")
             except Exception as e:
                 print(f"[fail][lab] {f.name}: {e}")
-        if dfs:
-            all_df = pd.concat(dfs, ignore_index=True)
-            for (ticker, fy, form, accno), g in all_df.groupby(["ticker","fy","form","accno"], dropna=False):
+
+        all_long = pd.concat(dfs, ignore_index=True) if dfs else pd.DataFrame()
+        all_wide = pd.concat(wides, ignore_index=True).drop_duplicates() if wides else pd.DataFrame()
+
+        if not all_long.empty:
+            for (ticker, fy, form, accno), g in all_long.groupby(["ticker","fy","form","accno"], dropna=False):
                 out_d = make_outdir(outdir, ticker, fy, form, accno)
                 print("[save labels]", out_d)
-                write_out(g, out_d, "labels", fmts)
+                write_out(g, out_d, "labels", fmts)  # 长表
+
+                if not all_wide.empty:
+                    need_cols = {
+                        "ticker","fy","form","accno","concept",
+                        "label_best","label_best_role","label_best_lang","label_search_tokens"
+                    }
+                    missing = [c for c in need_cols if c not in all_wide.columns]
+                    if missing:
+                        print(f"[warn] labels_wide missing cols: {missing} -> skip wide/best for {out_d}")
+                        continue
+
+                    gw = all_wide[
+                        (all_wide["ticker"]==ticker) &
+                        (all_wide["fy"]==fy) &
+                        (all_wide["form"]==form) &
+                        (all_wide["accno"]==accno)
+                    ]
+                    if not gw.empty:
+                        write_out(gw, out_d, "labels_wide", fmts)
+
+                        gb_cols = [
+                            "ticker","fy","form","accno","concept",
+                            "label_best","label_best_role","label_best_lang","label_search_tokens"
+                        ]
+                        gb = gw[gb_cols].drop_duplicates()
+                        if not gb.empty:
+                            write_out(gb, out_d, "labels_best", fmts)
     else:
         print("[warn] no *_lab.xml found")
+
 
     # --- calculation ---
     if cals:
