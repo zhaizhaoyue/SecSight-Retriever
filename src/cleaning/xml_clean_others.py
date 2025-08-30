@@ -64,7 +64,11 @@ def mirror_out_dir(in_file: Path, in_root: Path, out_root: Path) -> Path:
 # -----------------------
 # labels 优选（角色/语言归一 + 最佳挑选）
 # -----------------------
-ROLE_PRIORITY = ["standard", "terse", "total", "verbose", "documentation"]
+
+# -----------------------
+# labels 优选（角色/语言归一 + 最佳挑选）
+# -----------------------
+ROLE_PRIORITY = ["standard", "terse", "total", "documentation", "verbose"]  # UI 友好为先
 ROLE_MAP = {
     "http://www.xbrl.org/2003/role/label": "standard",
     "http://www.xbrl.org/2003/role/terseLabel": "terse",
@@ -89,72 +93,200 @@ def norm_lang(lang: Optional[str]) -> Optional[str]:
     t = str(lang).strip().lower()
     return LANG_NORM.get(t, lang)
 
-def to_tokens(txt: Optional[str]) -> Optional[str]:
-    if txt is None:
+def to_tokens(*txts: Optional[str]) -> Optional[str]:
+    """把若干文本拼起来做检索 token，NaN 安全；空则返回 None"""
+    parts: List[str] = []
+    for txt in txts:
+        if txt is None:
+            continue
+        if isinstance(txt, float) and np.isnan(txt):
+            continue
+        s = re.sub(r"[^\w\s\-/%]+", " ", str(txt).lower()).strip()
+        if s:
+            parts.append(s)
+    if not parts:
         return None
-    if isinstance(txt, float) and np.isnan(txt):
-        return None
-    t = re.sub(r"[^\w\s\-/%]+", " ", str(txt).lower()).strip()
-    return re.sub(r"\s+", " ", t) or None
+    # 去重 + 规整空白
+    s = " ".join(parts)
+    s = re.sub(r"\s+", " ", s)
+    return s or None
+
 
 
 def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    输入：长表 labels_df（含 concept, label_text, label_role, lang, 以及 ticker/fy/form/accno）
+    支持三种输入：
+      A) 已是 best：含 label_best/label_best_role/label_best_lang
+      B) 宽表 wide：列名形如 label_{role}_{lang}（如 label_standard_en-US）
+      C) 原始长表：concept + (label_text/label, label_role/role, lang)
     输出：
-      - best_df：每 concept 一行（附 label_best/_role/_lang/_search_tokens）
-      - wide_df：role×lang 展开后的宽表（便于展示/检索）
+      best_df：每 (ticker, fy, form, accno, concept) 一行，含 label_best/label_best_role/label_best_lang/label_doc/label_search_tokens
+      wide_df：若输入是 wide 或长表则返回展开宽表；若输入本来就是 best 且无长表信息，则返回仅键列
     """
-    if labels_df.empty or "concept" not in labels_df.columns:
-        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_search_tokens"]
+    if labels_df is None or labels_df.empty:
+        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_doc","label_search_tokens"]
         cols_wide = ["ticker","fy","form","accno","concept"]
         return pd.DataFrame(columns=cols_best), pd.DataFrame(columns=cols_wide)
 
-    lab = labels_df.copy()
-    if "label_role" not in lab.columns:
-        lab["label_role"] = "standard"
-    if "lang" not in lab.columns:
-        lab["lang"] = pd.NA
-    lab["label_role"] = lab["label_role"].apply(norm_role)
-    lab["lang"] = lab["lang"].apply(norm_lang)
+    df = labels_df.copy()
+    keycols = [c for c in ["ticker","fy","form","accno","concept"] if c in df.columns]
 
+    ROLE_PRIORITY = ["standard", "terse", "total", "documentation", "verbose"]
+    LANG_PRIORITY = ["en-US", "en", "en-GB", "zh", "nl"]
+    role_order = {r:i for i,r in enumerate(ROLE_PRIORITY)}
+    lang_order = {l:i for i,l in enumerate(LANG_PRIORITY)}
 
-    # 排序权重
-    role_rank = {r:i for i, r in enumerate(ROLE_PRIORITY)}
-    lang_rank = {l:i for i, l in enumerate(LANG_PRIORITY)}
-    lab["__role_rk"] = lab["label_role"].map(lambda x: role_rank.get(x, 999))
-    lab["__lang_rk"] = lab["lang"].map(lambda x: lang_rank.get(x, 999) if pd.notna(x) else 500)
+    def _tokens(*txts):
+        parts=[]
+        for t in txts:
+            if t is None: continue
+            if isinstance(t, float) and pd.isna(t): continue
+            s = re.sub(r"[^\w\s\-/%]+", " ", str(t).lower()).strip()
+            if s: parts.append(s)
+        if not parts: return None
+        return re.sub(r"\s+", " ", " ".join(parts)) or None
 
-    # best：按 role/语言优先取第一条
-    def _pick(g: pd.DataFrame) -> pd.Series:
+    # ---------- A) 输入已是 best ----------
+    if {"label_best","label_best_role","label_best_lang"}.issubset(df.columns):
+        best_df = df.copy()
+        if "label_doc" not in best_df.columns:
+            best_df["label_doc"] = None
+        if "label_search_tokens" not in best_df.columns:
+            best_df["label_search_tokens"] = best_df.apply(lambda r: _tokens(r.get("label_best"), r.get("label_doc")), axis=1)
+        keep = [c for c in ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_doc","label_search_tokens"] if c in best_df.columns]
+        for col in ["year","fy"]:
+            if col in best_df.columns:
+                best_df[col] = pd.to_numeric(best_df[col], errors="coerce").astype("Int64")
+        wide_df = pd.DataFrame(columns=[c for c in ["ticker","fy","form","accno","concept"] if c in df.columns])
+        return best_df[keep].drop_duplicates().reset_index(drop=True), wide_df
+
+    # ---------- B) 输入是宽表 wide ----------
+    wide_like_cols = [c for c in df.columns if c.startswith("label_")]
+    def _parse_col(c: str):
+        m = re.match(r"^label_([A-Za-z]+)_(.+)$", c)
+        if not m: return None
+        return m.group(1).lower(), m.group(2)
+
+    parsed = [(_parse_col(c), c) for c in wide_like_cols]
+    if any(p[0] is not None for p in parsed):
+        def _pick_best_from_wide(row: pd.Series):
+            items=[]
+            for (tpl, colname) in parsed:
+                if tpl is None: continue
+                role, lang = tpl
+                val = row.get(colname)
+                if pd.isna(val) or str(val).strip()=="":
+                    continue
+                items.append((role, lang, str(val)))
+            if not items:
+                return pd.Series({"label_best": None, "label_best_role": None, "label_best_lang": None,
+                                  "label_doc": None, "label_search_tokens": None})
+            doc_texts = [t for (r,l,t) in items if r=="documentation"]
+            label_doc = max(doc_texts, key=len) if doc_texts else None
+            items_sorted = sorted(items, key=lambda it: (role_order.get(it[0],999), lang_order.get(it[1],999)))
+            role_b, lang_b, text_b = items_sorted[0]
+            return pd.Series({
+                "label_best": text_b,
+                "label_best_role": role_b,
+                "label_best_lang": lang_b,
+                "label_doc": label_doc,
+                "label_search_tokens": _tokens(text_b, label_doc),
+            })
+
+        picks = df.apply(_pick_best_from_wide, axis=1)
+        best_df = pd.concat([df[keycols], picks], axis=1) if keycols else picks
+        for col in ["year","fy"]:
+            if col in best_df.columns:
+                best_df[col] = pd.to_numeric(best_df[col], errors="coerce").astype("Int64")
+            if col in df.columns:
+                df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
+        return best_df.drop_duplicates().reset_index(drop=True), df  # wide 直接返回原表
+
+    # ---------- C) 原始长表 ----------
+    # 别名容错
+    if "label_text" not in df.columns and "label" in df.columns:
+        df["label_text"] = df["label"]
+    if "label_role" not in df.columns and "role" in df.columns:
+        df["label_role"] = df["role"]
+    if "lang" not in df.columns:
+        df["lang"] = pd.NA
+
+    # 归一 role/lang
+    def _norm_role(uri: Optional[str]) -> str:
+        if not uri: return "standard"
+        mp = {
+            "http://www.xbrl.org/2003/role/label": "standard",
+            "http://www.xbrl.org/2003/role/terseLabel": "terse",
+            "http://www.xbrl.org/2003/role/verboseLabel": "verbose",
+            "http://www.xbrl.org/2003/role/documentation": "documentation",
+            "http://www.xbrl.org/2003/role/totalLabel": "total",
+        }
+        return mp.get(uri, uri.rsplit("/", 1)[-1])
+
+    def _norm_lang(lang: Optional[str]) -> Optional[str]:
+        if not lang: return None
+        t = str(lang).strip().lower()
+        mp = {"en":"en","en-us":"en-US","en-gb":"en-GB","zh":"zh","zh-cn":"zh","nl":"nl"}
+        return mp.get(t, lang)
+
+    df["label_role"] = df["label_role"].map(_norm_role)
+    df["lang"] = df["lang"].map(_norm_lang)
+
+    df["__role_rk"] = df["label_role"].map(lambda x: role_order.get(x, 999))
+    df["__lang_rk"] = df["lang"].map(lambda x: lang_order.get(x, 999) if pd.notna(x) else 500)
+
+    gcols = keycols or ["concept"]
+
+    def _pick_best_long(g: pd.DataFrame) -> pd.Series:
         g2 = g.sort_values(["__role_rk","__lang_rk"])
         top = g2.iloc[0]
+        # 额外：从组里找 documentation
+        doc_texts = g[g["label_role"]=="documentation"]["label_text"].dropna().astype(str)
+        label_doc = max(doc_texts, key=len) if not doc_texts.empty else None
         return pd.Series({
             "label_best": top["label_text"],
             "label_best_role": top.get("label_role"),
             "label_best_lang": top.get("lang"),
+            "label_doc": label_doc,
+            "label_search_tokens": to_tokens(top["label_text"]) if not label_doc else to_tokens(top["label_text"] + " " + label_doc)
         })
+        return pd.Series({"label_best": top["label_text"], "label_best_role": top.get("label_role"), "label_best_lang": top.get("lang")})
 
-    group_cols = ["ticker","fy","form","accno","concept"]
+    def _pick_doc_long(g: pd.DataFrame) -> Optional[str]:
+        s = g[g["label_role"] == "documentation"]["label_text"].dropna().astype(str)
+        return (max(s, key=len) if not s.empty else None)
+
     best_df = (
-        lab.groupby(group_cols, dropna=False)
-           .apply(_pick, include_groups=False)
-           .reset_index()
+        df.groupby(gcols, dropna=False)
+          .apply(_pick_best_long, include_groups=False)
+          .reset_index()
     )
-    best_df["label_search_tokens"] = best_df["label_best"].apply(to_tokens)
+    doc_df = (
+        df.groupby(gcols, dropna=False)
+          .apply(lambda g: pd.Series({"label_doc": _pick_doc_long(g)}), include_groups=False)
+          .reset_index()
+    )
+    best_df = best_df.merge(doc_df, on=gcols, how="left")
+    best_df["label_search_tokens"] = best_df.apply(lambda r: _tokens(r.get("label_best"), r.get("label_doc")), axis=1)
 
-    # wide：role×lang 展开为列，如 label_standard_en、label_terse_en-US
-    lab["lang_safe"] = lab["lang"].fillna("none")
-    lab["colkey"] = "label_" + lab["label_role"].astype(str) + "_" + lab["lang_safe"].astype(str)
-    wide_df = lab.pivot_table(
-        index=group_cols,
+    # wide：展开
+    df["lang_safe"] = df["lang"].fillna("none")
+    df["colkey"] = "label_" + df["label_role"].astype(str) + "_" + df["lang_safe"].astype(str)
+    wide_df = df.pivot_table(
+        index=gcols,
         columns="colkey",
         values="label_text",
-        aggfunc=lambda x: sorted(set([t for t in x if pd.notna(t) and str(t).strip()]))[0] if len(x) > 0 else None
+        aggfunc=lambda x: sorted(set([t for t in x if pd.notna(t) and str(t).strip()]))[0] if len(x)>0 else None
     ).reset_index()
 
+    for col in ["year","fy"]:
+        if col in best_df.columns:
+            best_df[col] = pd.to_numeric(best_df[col], errors="coerce").astype("Int64")
+        if col in wide_df.columns:
+            wide_df[col] = pd.to_numeric(wide_df[col], errors="coerce").astype("Int64")
 
-    return best_df, wide_df
+    return best_df.drop_duplicates().reset_index(drop=True), wide_df
+
 
 # -----------------------
 # 清洗：calculation_edges
@@ -203,7 +335,7 @@ def clean_definition_arcs(df: pd.DataFrame) -> pd.DataFrame:
 # -----------------------
 def clean_labels(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df.empty:
-        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_search_tokens"]
+        cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_doc","label_search_tokens"]
         cols_wide = ["ticker","fy","form","accno","concept"]
         return pd.DataFrame(columns=cols_best), pd.DataFrame(columns=cols_wide)
     best_df, wide_df = build_preferred_labels(df)
