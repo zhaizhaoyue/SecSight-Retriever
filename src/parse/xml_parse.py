@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 import argparse, json, os, re, sys
+import numpy as np
 from arelle import Cntlr, FileSource
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple, Any
@@ -113,6 +114,40 @@ def normalize_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
             df[col] = df[col].astype("string")
 
     return df
+
+from datetime import date, timedelta
+
+def derive_period_fq_fye(ps, pe, inst, fye):
+    d = inst or pe or ps  # 'YYYY-MM-DD'
+    if not d or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", d):
+        return None
+    yyyy, mm, dd = map(int, (d[:4], d[5:7], d[8:10]))
+    cur = date(yyyy, mm, dd)
+
+    if fye and re.fullmatch(r"\d{2}-\d{2}", fye):
+        fye_m, fye_d = map(int, (fye[:2], fye[3:5]))
+        # 当年财年截止日
+        fye_this = date(yyyy, fye_m, fye_d)
+        # 如果 instant 恰好是 FYE 的次日（常见 XBRL 表达）
+        if cur == fye_this + timedelta(days=1):
+            return "Q4"  # 归回上一财年的 Q4
+    # 其他日期按原先平移逻辑
+    mm = cur.month
+    fye_mm = int(fye[:2]) if fye and re.fullmatch(r"\d{2}-\d{2}", fye) else None
+    if not fye_mm:
+        return month_to_q(mm)
+    shifted = (mm - (fye_mm % 12)) % 12
+    if shifted in (1,2,3): return "Q1"
+    if shifted in (4,5,6): return "Q2"
+    if shifted in (7,8,9): return "Q3"
+    if shifted in (10,11,0): return "Q4"
+    return None
+
+
+def build_dims_signature(d: Dict[str,str]) -> str:
+    if not d: return ""
+    items = [f"{k}={v}" for k,v in sorted(d.items())]
+    return "|".join(items)
 
 def to_parquet_with_decimal(df: pd.DataFrame, out_path: Path):
     # 推断小数精度，保险起见统一给个较大的 scale/precision
@@ -412,7 +447,7 @@ def normalize_unit(unit_str: Optional[str], qname_str: str, value_display: Optio
         # 无 unit 时尝试从 qname / 文本里推断百分号
         if value_display and "%" in value_display:
             return "%", "percent"
-        if "percent" in qname_str.lower():
+        if "percent" in qname_str.lower() or "percentage" in qname_str.lower():
             return "%", "percent"
         return None, None
 
@@ -474,18 +509,31 @@ def concept_label_text(f, lang_priority=("en","en-US","en-GB")) -> Optional[str]
         return str(lbl).strip() if lbl else None
     except Exception:
         return None
+    
+BALANCE_PREFIXES = {
+    "us-gaap:propertyplantandequipment",    # 任意 PPE 变体
+    "us-gaap:propertyplantandequipmentgross",
+    "us-gaap:accumulateddepreciation",
+    "us-gaap:intangibleasset",
+    "us-gaap:goodwill",
+    "us-gaap:inventory",
+    # 其他你想强制归类到 balance 的概念前缀……
+}
 
 def guess_statement_hint(qname_str: str) -> str:
     s = qname_str.lower()
+    if any(s.startswith(p) for p in BALANCE_PREFIXES):
+        return "balance"
     if any(k in s for k in ["revenue","income","earnings","profit","loss","eps"]):
         return "income"
-    if any(k in s for k in ["asset","liabilit","equity","payable","receivable","inventory","goodwill"]):
-        return "balance"
-    if any(k in s for k in ["cash", "operatingactivities", "investingactivities", "financingactivities"]):
+    if any(k in s for k in ["cash","operatingactivities","investingactivities","financingactivities"]):
         return "cashflow"
-    if any(k in s for k in ["disclosure","note","supplemental","schedule"]):
+    if any(k in s for k in ["disclosure","note","supplemental","schedule","textblock"]):
         return "notes"
+    if any(k in s for k in ["asset","liabilit","equity","payable","receivable","goodwill","inventory"]):
+        return "balance"
     return "other"
+
 
 def period_label_builder(year: Optional[str|int], ps, pe, inst) -> Optional[str]:
     fy = f"FY{year}" if year else "FY?"
@@ -564,46 +612,74 @@ def parse_one(file_path: Path) -> pd.DataFrame:
         # 其他
         unit_ref  = unit_to_str(unit)
         unit_norm, unit_family = normalize_unit(unit_ref, qname, value_display)
-        decimals  = getattr(f, "decimals", None)
+        decimals_raw = getattr(f, "decimals", None)
+        decimals = None
+        if decimals_raw is not None:
+            s = str(decimals_raw).strip().lower()
+            if s not in ("inf", "infinite"):
+                try:
+                    decimals = int(decimals_raw)
+                except Exception:
+                    decimals = None
         label_txt = concept_label_text(f)
         stmt_hint = guess_statement_hint(qname)
+
+        # === 期间（基于 FYE 计算季度） ===
         period_fy = derive_period_fy(ps, pe, inst, base_meta.get("fy"))
-        period_fq = derive_period_fq(ps, pe, inst)
-        # 若从 context 推不出季度，用 DEI 的 fq 兜底
-        if not period_fq and base_meta.get("fq"):
-            period_fq = base_meta.get("fq")
-        # 用“期间财年”生成更准确的 label（而不是 meta year）
+        period_fq = derive_period_fq_fye(ps, pe, inst, base_meta.get("fye")) or base_meta.get("fq")
+
+        # === 申报批次（来自 DEI），与事实期间区分 ===
+        filing_fy = base_meta.get("fy")
+        filing_fq = base_meta.get("fq")
+
+        # 用“期间财年”生成更准确的 label
         per_label = period_label_builder(period_fy, ps, pe, inst)
+
+        # === 构造 row（一次性写全，避免先 update 再覆盖） ===
         row = dict(
-            # —— 你要求保留的核心字段 ——
-            period_fy=period_fy,               # 由 instant / end_date 推得的“期间财年”（calendar 年）
+            # —— 事实所属期间 —— 
+            period_fy=period_fy,
             period_fq=period_fq,
-            fy=(base_meta.get("fy") or None),            # ✅ 新增：行级 FY
-            fq=(base_meta.get("fq") or period_fq or None), 
+            fy=period_fy,     # 行级 fy/fq 用事实期间
+            fq=period_fq,
+
+            # —— 申报批次（方便筛选/分组） ——
+            filing_fy=filing_fy,
+            filing_fq=filing_fq,
+
+            # —— 概念与取值 ——
             qname=qname,
-            value=value,
+            value=value,                 # 若后续转为 value_num，可在 main() 里统一处理
+            value_raw=value_raw,
+            value_num=value_num,         # 这里是 arelle 的 xValue（可能为 None），main() 再标准化
+            value_display=value_display,
+
+            # —— 单位/小数 —— 
             unitRef=unit_ref,
+            unit_normalized=unit_norm,
+            unit_family=unit_family,
             decimals=decimals,
+
+            # —— 上下文 —— 
             context_id=context_id,
             context=ctx_dict,
+
+            # —— 文本/标签/提示 —— 
             label_text=label_txt,
             period_label=per_label,
             statement_hint=stmt_hint,
-            value_raw=value_raw,
-            value_num=value_num,
-            value_display=value_display,
-            unit_normalized=unit_norm,      # 例如 "USD" / "EUR" / "shares" / "%" / "pure"
-            unit_family=unit_family, 
-            period_type = "instant" if inst else ("duration" if (ps or pe) else None),
 
+            # —— 期间细节 —— 
+            period_type=("instant" if inst else ("duration" if (ps or pe) else None)),
             start_date=ps,
             end_date=pe,
             instant=inst,
 
-            # —— 从 context 中“摊平”实体/维度，便于筛选 —— 
+            # —— 从 context 摊平 —— 
             entity=ctx_dict.get("entity"),
             dimensions=ctx_dict.get("dimensions", {}),
-            # —— 元数据（溯源/RAG 过滤） ——
+
+            # —— 元数据 —— 
             ticker=(base_meta.get("ticker") or None),
             form=(base_meta.get("form") or None),
             year=(str(base_meta.get("year")) if base_meta.get("year") else None),
@@ -611,7 +687,12 @@ def parse_one(file_path: Path) -> pd.DataFrame:
             doc_date=(base_meta.get("doc_date") or None),
             source_path=str(file_path),
         )
+
+        # === 维度签名（只做一次） ===
+        row["dims_signature"] = build_dims_signature(row["dimensions"])
+
         rows.append(row)
+
 
     mx.close()
     return pd.DataFrame(rows)
@@ -646,33 +727,28 @@ def main():
         if df.empty:
             continue
         # ========== Silver → Gold 轻加工：数值与维度归档 ==========
-        # 4.1 value_num_clean：可计算的 float（百分比自动 /100）
-        df["value_num_clean"] = df.apply(
-            lambda r: to_float_maybe(r.get("value")), axis=1
-        )
+        df["value_num"] = df.apply(lambda r: to_float_maybe(r.get("value")), axis=1)
 
-        # 若判定是百分比（unit_family="percent" 或 文本含 % 或 qname 含 percent）
         percent_mask = (
             (df["unit_family"].fillna("") == "percent")
             | df["value_display"].fillna("").str.contains("%", regex=False)
-            | df["qname"].fillna("").str.lower().str.contains("percent")
+            | df["qname"].fillna("").str.lower().str.contains("percent|percentage")
         )
-        df.loc[percent_mask & df["value_num_clean"].notna(), "value_num_clean"] = \
-            df.loc[percent_mask & df["value_num_clean"].notna(), "value_num_clean"] / 100.0
+        df.loc[percent_mask & df["value_num"].notna(), "value_num"] = \
+            df.loc[percent_mask & df["value_num"].notna(), "value_num"] / 100.0
 
-        # 4.2 decimals：保存为 string，避免混型
+        if "value" in df.columns:
+            df = df.drop(columns=["value"])
+        if "value_num_clean" in df.columns:
+            df = df.drop(columns=["value_num_clean"])
+
         if "decimals" in df.columns:
-            df["decimals"] = df["decimals"].astype("string")
+            dec = pd.to_numeric(df["decimals"], errors="coerce")
+            dec = dec.replace([np.inf, -np.inf], np.nan)
+            df["decimals"] = pd.array(dec, dtype="Int64")
 
-        # 4.3 维度落为 JSON 字符串，便于 Parquet/schema 统一
-        if "dimensions" in df.columns:
-            df["dimensions_json"] = df["dimensions"].apply(
-                lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, dict) else (None if pd.isna(x) else str(x))
-            )
-
-        # 4.4 entity 统一 string
-        if "entity" in df.columns:
-            df["entity"] = df["entity"].astype("string")
+        if "dims_signature" not in df.columns and "dimensions" in df.columns:
+            df["dims_signature"] = df["dimensions"].apply(build_dims_signature)
         # 以解析后的 DataFrame 拿元数据（已 DEI 兜底）
         def first_nonnull(df, col, default=None):
             if col in df.columns:

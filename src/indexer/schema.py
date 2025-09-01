@@ -13,6 +13,20 @@ import argparse
 import pandas as pd
 import re
 
+HTML_TAG_RE = re.compile(r"<[^>]+>")
+PERCENT_NUM_RE = re.compile(r"\d(?:\s*\.\s*\d+)?\s*%")   # 数字紧邻的百分号，例如 "3.5%"、"25 %"
+TEXTBLOCK_RE = re.compile(r"TextBlock$", re.I)
+
+def _strip_html(s: Optional[str]) -> str:
+    if not s:
+        return ""
+    # 去掉标签，仅保留可见文本；再压缩空白
+    txt = HTML_TAG_RE.sub(" ", str(s))
+    txt = re.sub(r"\s+", " ", txt).strip()
+    return txt
+
+
+
 def dump_parquet(path: Path, records: Iterable):
     if pd is None:
         raise RuntimeError("pandas 未安装，无法导出 parquet。请 `pip install pandas pyarrow`")
@@ -164,6 +178,7 @@ class XbrlContext(BaseModel):
 class FactInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
+    # ---- 溯源/元信息 ----
     source_path: Optional[str] = None
     ticker: Optional[str] = None
     form:   Optional[str] = None
@@ -174,38 +189,41 @@ class FactInput(BaseModel):
     fq: Optional[str] = None
     linkrole: Optional[str] = None
 
+    # ---- 概念 & 取值 ----
     qname: str = Field(validation_alias=AliasChoices('qname','concept','name'))
+    # “原始/清洗后/展示”的多路输入，全部接受以便兜底
     value: FactScalar = None
-
+    value_num: Optional[float] = Field(default=None, validation_alias=AliasChoices('value_num', 'numeric_value'))
+    value_raw: Optional[str]   = Field(default=None, validation_alias=AliasChoices('value_raw','raw_value'))
     value_num_clean: Optional[float] = None
-    value_raw_clean: Optional[str] = None
-    value_display:   Optional[str] = None
+    value_raw_clean: Optional[str]   = None
+    value_display:   Optional[str]   = None
 
+    # ---- 单位/小数位 ----
     unit: Optional[str] = Field(default=None, validation_alias=AliasChoices('unit','uom','unit_normalized'))
+    unit_family: Optional[str] = None  # 用于判定百分比
     decimals: Optional[int] = None
 
+    # ---- 上下文/标签 ----
     context_id: Optional[str] = Field(default=None, validation_alias=AliasChoices('context_id','contextRef'))
     context: Optional[XbrlContext] = None
-
     label_text: Optional[str] = None
     period_label: Optional[str] = None
     rag_text: Optional[str] = None
     statement_hint: Optional[StatementHint] = None
 
+    # ---- 维度 ----
     dimensions_json: Optional[str] = None
     dimensions: Optional[Dict[str, str]] = None
 
-    #@model_validator(mode="before")
     @field_validator("decimals", mode="before")
     def _coerce_decimals(cls, v):
-        # 统一处理各种写法：'INF' / 'inf' / '+inf' / '-inf' / 'infinite' / 数字字符串 / float / int / None
         if v is None:
             return None
         if isinstance(v, int):
             return v
         if isinstance(v, float):
             return int(v) if v.is_integer() else None
-        # 其它情况一律转字符串再判断
         s = str(v).strip().lower()
         if s in ("inf", "+inf", "-inf", "infinite"):
             return None
@@ -214,27 +232,34 @@ class FactInput(BaseModel):
         except Exception:
             return None
 
-    def coalesce_fields(cls, data: dict) -> dict:
+    @model_validator(mode="before")
+    def _coalesce_fields(cls, data: dict) -> dict:
+        # ---------- NaN → None ----------
+        from math import isnan
         for k, v in list(data.items()):
             if isinstance(v, float) and isnan(v):
                 data[k] = None
+            elif isinstance(v, str) and v.strip() == "":
+                # 空串统一成 None（避免后续判断混乱）
+                data[k] = None
 
-        y = data.get("year")
-        if isinstance(y, str) and y.isdigit():
-            data["year"] = int(y)
-        fy = data.get("fy")
-        if isinstance(fy, str) and fy.isdigit():
-            data["fy"] = int(fy)
+        # ---------- year/fy 转 int ----------
+        for key in ("year", "fy"):
+            v = data.get(key)
+            if isinstance(v, str) and v.isdigit():
+                data[key] = int(v)
 
+        # ---------- context 兜底（若只给了扁平 period_*） ----------
         if data.get("context") is None and any(k in data for k in ("period_start","period_end","instant")):
             data["context"] = {
                 "period": {
-                    "period_start": data.get("period_start"),
-                    "period_end":   data.get("period_end"),
-                    "instant":      data.get("instant"),
+                    "start_date": data.get("period_start"),
+                    "end_date":   data.get("period_end"),
+                    "instant":    data.get("instant"),
                 }
             }
-        # --- 归一 decimals: 支持 "INF" / "inf" / 数字字符串 ---
+
+        # ---------- decimals 归一（字符串/inf） ----------
         dec = data.get("decimals")
         if isinstance(dec, str):
             s = dec.strip().lower()
@@ -248,6 +273,7 @@ class FactInput(BaseModel):
         elif isinstance(dec, float):
             data["decimals"] = int(dec) if dec.is_integer() else None
 
+        # ---------- statement_hint → Enum ----------
         sh = data.get("statement_hint")
         if isinstance(sh, str):
             m = {
@@ -260,6 +286,7 @@ class FactInput(BaseModel):
             }
             data["statement_hint"] = m.get(sh.strip().lower(), data.get("statement_hint"))
 
+        # ---------- dimensions_json → dimensions ----------
         dj = data.get("dimensions_json")
         if isinstance(dj, str):
             try:
@@ -267,51 +294,129 @@ class FactInput(BaseModel):
             except Exception:
                 pass
 
-        v_num = data.get("value_num_clean")
-        if isinstance(v_num, float) and isnan(v_num):
-            v_num = None
-        if v_num is not None:
-            data["value"] = v_num
+        # ---------- 统一求 value（多路兜底） ----------
+        def parse_human_number(s: Optional[str]) -> Optional[float]:
+            if s is None:
+                return None
+            txt = str(s).strip()
+            if not txt:
+                return None
+            # 括号负号、去千分位、去$
+            neg = txt.startswith("(") and txt.endswith(")")
+            if neg:
+                txt = txt[1:-1]
+            txt = (txt.replace("\u00A0"," ")
+                      .replace(",", "")
+                      .replace("$", "")
+                      .strip())
+            m = re.match(r"^([+-]?\d+(?:\.\d+)?)(?:\s*([KkMmBbTt]))?$", txt)
+            if not m:
+                return None
+            num = float(m.group(1))
+            mul = {"K":1e3,"M":1e6,"B":1e9,"T":1e12}.get((m.group(2) or "").upper(), 1.0)
+            val = num * mul
+            return -val if neg else val
+
+        # 优先级：value_num_clean → value_num → value → value_raw_clean → value_raw → value_display
+        val: Optional[float] = None
+        if data.get("value_num_clean") is not None:
+            val = data["value_num_clean"]
+        elif data.get("value_num") is not None:
+            val = data["value_num"]
+        elif isinstance(data.get("value"), (int, float)) and str(data["value"]).lower() not in ("true","false"):
+            val = float(data["value"])
+        if val is None and isinstance(data.get("value_raw_clean"), str):
+            s = data["value_raw_clean"].strip()
+            if s.lower() in ("true","false"):
+                data["value"] = (s.lower() == "true")
+                val = None
+            else:
+                try:
+                    val = float(Decimal(s.replace(",", "")))
+                except Exception:
+                    val = parse_human_number(s)
+        if val is None and isinstance(data.get("value_raw"), str):
+            val = parse_human_number(data["value_raw"])
+        if val is None and isinstance(data.get("value_display"), str):
+            val = parse_human_number(data["value_display"])
+
+        # 百分比自动 /100：unit_family=percent 或 文本带 % 或 概念名含 percent/percentage
+        unit_family = str(data.get("unit_family") or "").lower()
+        qname_l = str(data.get("qname") or "").lower()
+        text_src = None
+        for k in ("value_display","value_raw_clean","value_raw"):
+            if isinstance(data.get(k), str) and data[k]:
+                text_src = data[k]
+                break
+        is_percent = (
+            unit_family == "percent"
+            or (isinstance(text_src, str) and "%" in text_src)
+            or ("percent" in qname_l or "percentage" in qname_l)
+        )
+        if val is not None and is_percent:
+            val = val / 100.0
+
+        # 若最终拿到了数值，写回到统一的 value
+        if val is not None:
+            data["value"] = val
         else:
-            v_raw = data.get("value_raw_clean")
-            if isinstance(v_raw, str):
-                s = v_raw.strip().lower()
-                if s in ("true","false"):
-                    data["value"] = (s == "true")
-                else:
-                    try:
-                        data["value"] = Decimal(v_raw.replace(",", ""))
-                    except (InvalidOperation, AttributeError):
-                        data["value"] = data.get("value_display")
+            # 处理布尔（若还没处理）
+            v_raw = data.get("value_raw_clean") or data.get("value_raw")
+            if isinstance(v_raw, str) and v_raw.strip().lower() in ("true","false"):
+                data["value"] = (v_raw.strip().lower() == "true")
+
         return data
+
+
+
+
+
 
 # -----------------------------
 # Fact（Silver 输出） —— CHANGED: 新增扁平 period_* 与回溯字段
+# -----------------------------
+# -----------------------------
+# Fact（Silver 输出）—— 扩充缺失字段
 # -----------------------------
 class Fact(RecordBase):
     id: UUID = Field(default_factory=uuid4)
 
     # 概念与取值
     qname: str
-    value: Decimal
-    unit: Optional[str] = None
+    value: Decimal                           # 原始高精度值（保留）
+    unit: Optional[str] = None               # 原始/清洗后的单位（见映射逻辑）
     decimals: Optional[int] = None
+
+    # ✅ 新增：衍生/对齐列（全部可选，向后兼容）
+    value_raw: Optional[str] = None          # 原始文本（如果能拿到）
+    value_num: Optional[float] = None        # 可计算的 float（百分比已/100）
+    value_display: Optional[str] = None      # 友好展示文本（K/M/B 等）
+    unit_normalized: Optional[str] = None    # 归一化单位：USD / shares / % / pure / ...
+    unit_family: Optional[str] = None        # currency / shares / percent / pure
+    rag_text: Optional[str] = None           # label+value+period+meta
 
     # 上下文
     context_id: Optional[str] = None
     context: Optional[XbrlContext] = None
 
-    # 扁平期间（便于 SQL 过滤） —— NEW
+    # 扁平期间（便于 SQL 过滤）
     period_start: Optional[str] = None
     period_end: Optional[str] = None
     instant: Optional[str] = None
+    period_label: Optional[str] = None       # ✅ 新增：FY.. instant.. 或 FY.. a→b
 
     # 语义
     statement_hint: Optional[StatementHint] = None
 
+    # ✅ 新增：维度展平签名
+    dims_signature: Optional[str] = None
+
+    # ✅ 新增：规范化期别（方便排序/过滤）
+    fy_norm: Optional[int] = None
+    fq_norm: Optional[int] = None
+
     @field_validator("decimals", mode="before")
     def _coerce_decimals_out(cls, v):
-        # 出口也做一次兜底，确保 silver 里永远是 int|None
         if v is None:
             return None
         if isinstance(v, int):
@@ -332,6 +437,7 @@ class Fact(RecordBase):
         if ":" not in v:
             raise ValueError("qname must include namespace, e.g., 'us-gaap:Revenues'")
         return v
+
 
 # -----------------------------
 # 其它模型（labels/def/cal）保持原状
@@ -488,42 +594,198 @@ class LabelWideItem(BaseModel):
 # -----------------------------
 # 工具函数：FactInput -> Fact —— CHANGED: 填充 period_* 与回溯字段
 # -----------------------------
+# ===== 辅助函数（贴到文件任意位置，_map_factinput_to_fact 前即可） =====
+import math
+
+_PERCENT_RE = re.compile(r"percent|percentage", re.I)
+
+def _norm_unit(unit: Optional[str], qname: str, value_display: Optional[str]) -> tuple[Optional[str], Optional[str]]:
+    """归一化单位；返回 (unit_normalized, unit_family)"""
+
+    # 1) TextBlock 一律不自动推断单位
+    if qname and TEXTBLOCK_RE.search(qname):
+        return None, None
+
+    # 2) 有 unit 就优先用 unit
+    if unit and str(unit).strip():
+        s = str(unit).strip()
+        m = re.search(r"(?:iso4217:)?([A-Z]{3})\b", s)
+        if m:
+            return m.group(1).upper(), "currency"
+        if "%" in s or "percent" in s.lower():
+            return "%", "percent"
+        if re.search(r"\bshares?\b", s, re.I):
+            return "shares", "shares"
+        if re.search(r"\bpure\b", s, re.I):
+            return "pure", "pure"
+        return s, None
+
+    # 3) 没有 unit 时，只在“可见文本”里出现“数字+%”才推断为百分比
+    vis = _strip_html(value_display)
+    if PERCENT_NUM_RE.search(vis) or _PERCENT_RE.search(qname or ""):
+        return "%", "percent"
+
+    return None, None
+
+
+def _to_float_maybe(x) -> Optional[float]:
+    if x is None:
+        return None
+    if isinstance(x, (int, float)):
+        return float(x)
+    try:
+        s = str(x).strip().replace(",", "")
+        if s.endswith("%"):
+            s = s[:-1]
+        return float(s)
+    except Exception:
+        return None
+
+def _fmt_value_short(v: Optional[float]) -> Optional[str]:
+    if v is None or (isinstance(v, float) and (math.isnan(v) or math.isinf(v))):
+        return None
+    av = abs(v)
+    if av >= 1e9:  return f"{v/1e9:.3f} B"
+    if av >= 1e6:  return f"{v/1e6:.3f} M"
+    if av >= 1e3:  return f"{v/1e3:.3f} K"
+    return f"{v:.6g}"
+
+def _mk_period_label(fy: Optional[int], fq: Optional[str], start: Optional[str], end: Optional[str], instant: Optional[str]) -> Optional[str]:
+    if instant:
+        return f"FY{fy} instant {instant}" if fy else f"instant {instant}"
+    if start or end:
+        a = start or "?"
+        b = end or "?"
+        if fy and fq:
+            return f"FY{fy} {a}→{b}"
+        if fy:
+            return f"FY{fy} {a}→{b}"
+        return f"{a}→{b}"
+    return None
+
+def _build_dims_signature(dims: Optional[Dict[str, str]]) -> str:
+    if not dims:
+        return ""
+    items = [f"{k}={v}" for k, v in sorted(dims.items())]
+    return "|".join(items)
+
+def _mk_rag_text(label: Optional[str], qname: str, value_display: Optional[str], period_label: Optional[str],
+                 ticker: Optional[str], form: Optional[str], accno: Optional[str]) -> str:
+    name = label or qname or "(no label)"
+    val  = value_display if value_display is not None else ""
+    meta = f"{ticker} {form}" + (f" accno={accno}" if accno else "")
+    per  = period_label or ""
+    return f"{name}: {val} ({per}; {meta})".strip()
+
+def _fq_to_int(fq: Optional[str]) -> Optional[int]:
+    if not fq:
+        return None
+    m = re.search(r"(\d+)", str(fq))
+    return int(m.group(1)) if m else None
+
+# ===== 替换你的 _map_factinput_to_fact =====
 def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
-    # 从 context 扁平出期间
-    p_start = None
-    p_end = None
-    p_inst = None
+    # 1) 扁平期间
+    p_start = p_end = p_inst = None
     if fi.context and fi.context.period:
         p_start = getattr(fi.context.period, "start_date", None)
         p_end   = getattr(fi.context.period, "end_date", None)
         p_inst  = getattr(fi.context.period, "instant", None)
 
+    # 2) 数值：优先 value_num_clean → 其次 value_raw_clean → 再次 value_display / value
+    value_raw = None
+    if fi.value_raw_clean is not None:
+        value_raw = str(fi.value_raw_clean)
+    elif isinstance(fi.value, str):
+        value_raw = fi.value
+
+    vnum = None
+    if fi.value_num_clean is not None:
+        vnum = fi.value_num_clean
+    else:
+        # 从 value_raw_clean / value_display / value 尝试解析
+        for cand in (fi.value_raw_clean, fi.value_display, fi.value):
+            vnum = _to_float_maybe(cand)
+            if vnum is not None:
+                break
+
+    # 3) 归一化单位、百分比 /100
+    unit_norm, unit_family = _norm_unit(fi.unit, fi.qname, fi.value_display)
+    is_textblock = bool(fi.qname and TEXTBLOCK_RE.search(fi.qname))
+    if (not is_textblock) and unit_family == "percent" and vnum is not None:
+        vnum = vnum / 100.0
+
+    # 4) 友好展示
+    is_textblock = bool(fi.qname and TEXTBLOCK_RE.search(fi.qname))
+    if is_textblock:
+        # 用简短提示 + 长度
+        raw_len = len(str(fi.value_display or fi.value_raw_clean or "")) 
+        vdisp = f"[HTML TextBlock ~{raw_len} chars]"
+    else:
+        vdisp = fi.value_display or _fmt_value_short(vnum)
+
+    # 5) period_label / fy_norm / fq_norm
+    period_label = _mk_period_label(fi.fy, fi.fq, p_start, p_end, p_inst)
+    fy_norm = int(fi.fy) if isinstance(fi.fy, int) else None
+    fq_norm = _fq_to_int(fi.fq)
+
+    # 6) 维度签名
+    dims = None
+    if fi.dimensions:
+        dims = fi.dimensions
+    elif fi.context and fi.context.dimensions:
+        dims = fi.context.dimensions
+    dims_sig = _build_dims_signature(dims)
+
+    # 7) rag_text
+    rag = _mk_rag_text(fi.label_text, fi.qname, vdisp, period_label, fi.ticker, fi.form, fi.accno)
+
+    # 8) Decimal 高精度 value（保底：由 vnum 或 0）
+    if vnum is not None:
+        dec_value = Decimal(str(vnum))
+    else:
+        # 若没解析出数值，保底 0；仍可从 value_raw 看文本
+        dec_value = Decimal("0")
+
     return Fact(
+        # —— 继承 RecordBase 回溯元信息 —— 
         source_path = fi.source_path or "",
         ticker      = fi.ticker,
         form        = fi.form,
         year        = fi.year,
         accno       = fi.accno,
-
-        # NEW: 回溯字段
         fy          = fi.fy,
         fq          = fi.fq,
         doc_date    = fi.doc_date,
         linkrole    = fi.linkrole,
 
+        # —— fact 主体 —— 
         qname       = fi.qname,
-        value       = Decimal(str(fi.value)) if fi.value is not None else Decimal("0"),
-        unit        = fi.unit,
+        value       = dec_value,
+        unit        = fi.unit or unit_norm,     # 若入参无 unit，用归一化后的
         decimals    = fi.decimals,
         context_id  = fi.context_id,
         context     = fi.context,
         statement_hint = fi.statement_hint,
 
-        # NEW: 扁平期间
+        # —— 扁平期间 —— 
         period_start = p_start,
         period_end   = p_end,
         instant      = p_inst,
+        period_label = period_label,
+
+        # —— 新增/补齐的衍生字段 —— 
+        value_raw   = value_raw,
+        value_num   = vnum,
+        value_display = vdisp,
+        unit_normalized = unit_norm,
+        unit_family = unit_family,
+        rag_text    = rag,
+        dims_signature = dims_sig,
+        fy_norm     = fy_norm,
+        fq_norm     = fq_norm,
     )
+
 
 # -----------------------------
 # 路由

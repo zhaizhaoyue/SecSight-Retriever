@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import shutil
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, Tuple
 
@@ -248,33 +249,32 @@ def process_group_jsonl(
 
     # -------- helpers --------
     def est_edge_tokens(r: Dict[str, Any]) -> int:
-        """
-        更保守的 token 估算：按字符长度近似，避免 QName 没空格导致低估。
-        经验：~4 字符 ≈ 1 token（大致），再加一些常数项。
-        """
-        parts = []
+        # 先看 fact 的可读文本
+        if r.get("rag_text"):
+            s = str(r.get("rag_text"))
+            return max(12, (len(s) // 4) + 1)  # ~4 chars ≈ 1 token
+        # 退化：概念+值+期间
+        if r.get("concept") or r.get("qname"):
+            s = "|".join([
+                str(r.get("concept") or r.get("qname") or ""),
+                str(r.get("value_display") or r.get("value_raw") or ""),
+                str(r.get("period_label") or ""),
+            ])
+            return max(12, (len(s) // 4) + 1)
 
-        # cal
+        # 原有 cal/def 逻辑
+        parts = []
         parts.append(r.get("parent_concept") or "")
         parts.append(r.get("child_concept") or "")
-
-        # def
         parts.append(r.get("from_concept") or "")
         parts.append(r.get("to_concept") or "")
-
-        # 关联信息
         parts.append(r.get("arcrole") or "")
         parts.append(r.get("preferred_label") or "")
         parts.append(r.get("linkrole") or "")
-
-        # 去掉命名空间前缀，减少长度但保留语义主体
         s = "|".join(parts)
         for ns in ("us-gaap:", "dei:", "srt:", "aapl:", "ifrs-full:", "xbrli:"):
             s = s.replace(ns, "")
-
-        # 以字符长度近似 -> token，4 字符 ≈ 1 token；至少给 8，避免 0
-        approx = max(8, (len(s) // 4) + 1)
-        return approx
+        return max(8, (len(s) // 4) + 1)
 
 
     def pack_with_budget(bucket: List[Dict[str, Any]]) -> List[List[Dict[str, Any]]]:
@@ -355,6 +355,64 @@ def process_group_jsonl(
             else:
                 kind = "generic"
 
+        # === 修正块：仅对 fact 的 edges 做最小兜底 ===
+        if kind == "fact":
+            balance_like_re = re.compile(
+                r"(?:CashAndCashEquivalents(?:AtCarryingValue)?"
+                r"|MarketableSecurities(?:Current|Noncurrent)?"
+                r"|Assets|Liabilities|StockholdersEquity|ShareholdersEquity"
+                r"|RetainedEarnings|AccumulatedOtherComprehensiveIncome"
+                r"|ShortTerm|LongTerm|Debt|Inventory|Receivables"
+                r"|PropertyPlantAndEquipment|AccumulatedDepreciation"
+                r"|OtherAccruedLiabilities(?:Current|Noncurrent)?"
+                r"|AccruedIncomeTaxes(?:Current|Noncurrent)?)",
+                flags=re.IGNORECASE
+            )
+            known_balance = {
+                "us-gaap:CashAndCashEquivalentsAtCarryingValue",
+                "us-gaap:MarketableSecuritiesCurrent",
+                "us-gaap:MarketableSecuritiesNoncurrent",
+            }
+
+            for r in g:
+                # 1) period 以 context.period 为准（若存在）
+                per = ((r.get("context") or {}).get("period") or {})
+                for src, dst in (("start_date", "period_start"),
+                                 ("end_date",   "period_end"),
+                                 ("instant",    "instant")):
+                    v = per.get(src)
+                    if v is not None:
+                        r[dst] = v
+
+                concept = (r.get("concept") or r.get("qname") or "").strip()
+                concept_l = concept.lower()
+
+                # 2) TextBlock：去掉度量/小数占位；补个占位 value_display
+                if concept_l.endswith("textblock"):
+                    for k in ("unit", "unit_normalized", "unit_family", "decimals"):
+                        if k in r:
+                            r[k] = None
+                    if not r.get("value_display"):
+                        r["value_display"] = "[HTML TextBlock ~0 chars]"
+
+                # 3) 资产负债表优先级（instant + balance-like/已知科目）
+                has_instant = bool(r.get("instant"))
+                if has_instant and (
+                    balance_like_re.search(concept) or concept in known_balance
+                ):
+                    r["statement_hint"] = "balance"
+
+                # 4) EPS/股本等典型利润表条目（可选，小修）
+                if re.search(
+                    r"(EarningsPerShare|DilutedShares|BasicShares|AntidilutiveSecurities|WeightedAverageNumber)",
+                    concept, flags=re.IGNORECASE
+                ):
+                    r["statement_hint"] = "income"
+
+                # 5) 空维度签名统一为 None
+                if r.get("dims_signature") == "":
+                    r["dims_signature"] = None
+
         # linkrole 短标签
         lr_tag = (lr or "__NA__").split("/")[-1][:48]
         chunk_id = f"{base}::{kind}::{lr_tag}::group::{gidx}"
@@ -376,6 +434,27 @@ def process_group_jsonl(
             if len(lines) >= 10:
                 break
         summary_text = "\n".join(lines)
+
+        
+        # ✅ 对 fact 的兜底：若还是空，则用 rag_text/概念行生成摘要
+        if (not summary_text) and kind == "fact":
+            fact_lines = []
+            for r in g:
+                rt = r.get("rag_text")
+                if isinstance(rt, str) and rt.strip():
+                    fact_lines.append(rt.strip())
+                else:
+                    c  = r.get("concept") or r.get("qname") or "(no concept)"
+                    vd = r.get("value_display")
+                    pl = r.get("period_label")
+                    # 只拼有用的
+                    parts = [str(c)]
+                    if vd: parts.append(str(vd))
+                    if pl: parts.append(f"({pl})")
+                    fact_lines.append(": ".join(parts))
+                if len(fact_lines) >= 40:  # 避免过长
+                    break
+            summary_text = "\n".join(fact_lines)
 
         out = {
             "parent_concepts": parents,
