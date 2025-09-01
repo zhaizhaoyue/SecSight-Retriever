@@ -4,7 +4,7 @@ from pathlib import Path
 import re
 import json
 import numpy as np
-
+from collections import defaultdict
 from src.rag.retriever import HybridRetriever
 from src.rag.reranker import Reranker
 
@@ -26,6 +26,51 @@ KEYS = (
 
 # ---- 如果 meta 里有 heading/section，优先这些关键词 ----
 SECTION_HINTS = ("consolidated balance sheet", "balance sheets", "statement of financial position")
+# 更严格的金额匹配：要求要么带 $ 且有千位分隔（如 $ 12,345），
+# 要么带单位（million/billion），避免 0.001/“1”这类噪声。
+MONEY_TIGHT = re.compile(
+    r"(?:"
+    r"\$\s?[0-9]{1,3}(?:,[0-9]{3})+(?:\.[0-9]+)?"
+    r"|"
+    r"[0-9]+(?:\.[0-9]+)?\s*(?:million|billion)"
+    r"|"
+    r"\$\s?[0-9]+(?:\.[0-9]+)?\s*(?:million|billion)"
+    r")",
+    flags=re.IGNORECASE
+)
+
+BLACKLIST_LINE = (
+    "par value", "preferred stock", "common stock",
+    "stockholders’ equity", "stockholders' equity", "equity", "authorized"
+)
+
+
+def load_all_metas(index_dir):
+    metas=[]
+    with open(f"{index_dir}/meta.jsonl","r",encoding="utf-8") as f:
+        for line in f: metas.append(json.loads(line))
+    return metas
+
+def expand_neighbors(top_items, metas, window=2):
+    # 根据 chunk_index 找邻居
+    by_id = {m.get("chunk_id"): m for m in metas}
+    out = []
+    seen = set()
+    for it in top_items:
+        m = it["meta"]; base = int(m.get("chunk_index", -1))
+        for d in range(-window, window+1):
+            ci = base + d
+            key = f"{m.get('accno')}::text::chunk-{ci}"
+            nm = by_id.get(key)
+            if not nm or key in seen: continue
+            seen.add(key)
+            out.append({
+                "text": nm.get("text") or nm.get("text_preview") or "",
+                "meta": nm,
+                "score": 0.0,  # 占位
+                "faiss_id": ci,  # 仅用于排序展示
+            })
+    return out
 
 def has_keywords(text: str) -> bool:
     t = (text or "").lower()
@@ -99,6 +144,35 @@ def heuristic_extract_amount(context: str) -> str | None:
     # （可选增强：基于行切分，向上/下两行搜金额）
     return None
 
+# --- line-wise money extractor (add near heuristic_extract_amount) ---
+LINE_MONEY = re.compile(r"\$?\s?[0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]+)?", re.I)
+
+def linewise_extract_amount(context: str) -> str | None:
+    lines = [l.strip() for l in context.splitlines() if l.strip()]
+    for i, l in enumerate(lines):
+        low = l.lower()
+        # 必须同时包含 liabilities 和 noncurrent/long-term
+        if ("liabilit" in low) and ("noncurrent" in low or "non-current" in low or "long-term" in low):
+            # 跳过明显的股本/面值等干扰行
+            if any(b in low for b in BLACKLIST_LINE):
+                continue
+            # 先在本行找严格金额
+            money = MONEY_TIGHT.findall(l)
+            if money:
+                return money[-1]
+            # 向下看 1-2 行（表格断行常见）
+            for j in (i + 1, i + 2):
+                if j < len(lines):
+                    lowj = lines[j].lower()
+                    if any(b in lowj for b in BLACKLIST_LINE):
+                        continue
+                    mm = MONEY_TIGHT.findall(lines[j])
+                    if mm:
+                        return mm[-1]
+    return None
+
+
+
 def main():
     print("[demo] TSLA noncurrent liabilities test")
 
@@ -107,28 +181,59 @@ def main():
     cands = ret.search_hybrid(
         QUERY,
         ticker=TICKER, year=YEAR, form=FORM,
-        rr_k_dense=300, rr_k_bm25=400,  # 先多取一些
-        top_k=180
+        rr_k_dense=600, rr_k_bm25=800,   # ↑ 召回更大
+        top_k=300
     )
 
     print_top("Hybrid candidates (pre-rerank)", cands, k=5, score_key="score")
 
     # 2) 关键词/版块预过滤（保留一批更相关的给重排）
-    cands = keyword_prefilter(cands, min_keep=50)
+    cands = keyword_prefilter(cands, min_keep=80)
 
     # 3) 重排
-    rer = Reranker()  # 如需CPU：Reranker(device="cpu")
-    top = rer.rerank(QUERY, cands, top_k=12)
+    # 3) 重排
+    rer = Reranker()
+    top = rer.rerank(QUERY, cands, top_k=20)
 
-    print_top("Reranked Top", top, k=8, score_key="rerank_score")
+    # 3.1 加载所有 meta（用于找相邻块）
+    metas_all = load_all_metas(INDEX_DIR)
 
-    # 4) 构建上下文
-    ctx = build_context(top, k=8)
+    # 3.2 取每个命中块的邻居（chunk_index±4）
+    neighbors = expand_neighbors(top, metas_all, window=4)
+    if neighbors is None:
+        neighbors = []  # 防御式：保证是 list
+
+    # 3.3 合并：先邻居后命中；按 chunk_id 去重
+    combo = neighbors + top  # 即使 neighbors 为空也没关系
+    seen = set()
+    merged = []
+    for x in combo:
+        m = x.get("meta") or {}
+        cid = m.get("chunk_id")
+        if not cid:
+            # 防御：没有 chunk_id 的也不要让它炸
+            continue
+        if cid in seen:
+            continue
+        seen.add(cid)
+        # 确保 text 字段可用（用于后续显示/抽取）
+        if not x.get("text"):
+            x["text"] = m.get("text") or m.get("text_preview") or ""
+        merged.append(x)
+
+    # 兜底：如果 merged 还是空，用 top 兜底，避免 UnboundLocalError
+    if not merged:
+        merged = top
+
+    # 4) 构建上下文（把 k 放大一些以覆盖完整表格）
+    ctx = build_context(merged, k=20)
+
     print("\n=== Context preview ===")
     print(ctx[:1400], "...\n")
 
     # 5) 规则抽取（无LLM也先给个“估值”）
-    amount = heuristic_extract_amount(ctx)
+    amount = heuristic_extract_amount(ctx) or linewise_extract_amount(ctx)
+
     if amount:
         print(f"=== Heuristic Answer (no-LLM) ===\nTesla total noncurrent liabilities (FY{YEAR}): {amount}\n"
               f"(source: snippets [1..8] above)")
@@ -149,4 +254,5 @@ if __name__ == "__main__":
     assert (idx / "hnsw.index").exists() and (idx / "meta.jsonl").exists(), "index/meta 文件不存在"
     main()
 
-#python -m src.scripts.demo_search
+
+#python -m src.scripts.test_tsla_noncurrent
