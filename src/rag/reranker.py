@@ -1,17 +1,16 @@
 from sentence_transformers import CrossEncoder
+from typing import List, Dict, Any
 
-# 建议：base 版，显存友好
-model = CrossEncoder("BAAI/bge-reranker-base", device="cuda")
+class Reranker:
+    def __init__(self, model_name="BAAI/bge-reranker-base", device="cuda", max_length=512):
+        # 在初始化时传 max_length
+        self.model = CrossEncoder(model_name, device=device, max_length=max_length)
 
-def rerank(query: str, candidates: list[str], top_k: int = 10):
-    pairs = [(query, c) for c in candidates]
-    # 你可以调 max_length（默认 512），超长会截断
-    scores = model.predict(pairs, batch_size=64, convert_to_numpy=True)
-    order = scores.argsort()[::-1]
-    top = [(candidates[i], float(scores[i])) for i in order[:top_k]]
-    return top
+    def rerank(self, query: str, candidates: List[Dict[str, Any]], top_k: int = 10) -> List[Dict[str, Any]]:
+        pairs = [(query, c["text"]) for c in candidates]
+        scores = self.model.predict(pairs, show_progress_bar=False)  # 这里不要传 max_length
+        for c, s in zip(candidates, scores):
+            c["rerank_score"] = float(s)
+        candidates.sort(key=lambda x: x["rerank_score"], reverse=True)
+        return candidates[:top_k]
 
-# 示例
-query = "What are Apple's noncurrent liabilities?"
-cands = ["...candidate text 1...", "...candidate text 2...", "..."]
-print(rerank(query, cands, top_k=5))
