@@ -18,7 +18,41 @@ LLM_MODEL_NAME = os.getenv("RAG_LLM_MODEL", "your-llm-name")  # 仅用于记录
 FACTS_NUMERIC_PATH = os.getenv("RAG_FACTS_NUMERIC", "data/clean/facts_numeric.parquet")
 # 禁止 numeric 失败后走文本兜底；想临时恢复，把环境变量设为 1
 DISABLE_TEXT_FALLBACK = os.getenv("RAG_DISABLE_TEXT_FALLBACK", "1") in {"1","true","yes","y"}
+_REVENUE_ALIASES = [
+    "us-gaap:SalesRevenueNet",
+    "us-gaap:RevenueFromContractWithCustomerExcludingAssessedTax",
+    "us-gaap:SalesRevenueGoodsNet",
+    "us-gaap:SalesRevenueServicesNet",
+    "us-gaap:Revenues",
+]
+def _pick_best_revenue_concept(df, ticker: Optional[str], form: Optional[str], fy: Optional[int]) -> Optional[str]:
+    """
+    在 facts_numeric 里为给定标的挑一个“有数据”的营收概念。
+    优先：匹配 ticker/form 的行数（若 form 下无数据，则放宽 form）。
+    """
+    try:
+        sub = df.copy()
+        if ticker:
+            sub = sub[sub["ticker"] == ticker]
+        if fy is not None and "fy_norm" in sub.columns:
+            sub = sub[sub["fy_norm"] == int(fy)]
+        # 先带 form 统计，再放宽
+        def _score(use_form: bool):
+            s = sub
+            if use_form and form:
+                s = s[s["form"] == form]
+            s = s[s["concept"].isin(_REVENUE_ALIASES)]
+            if s.empty:
+                return None
+            # 统计每个概念的可用 value_std 数量
+            counts = s.groupby("concept")["value_std"].apply(lambda x: x.notna().sum()).sort_values(ascending=False)
+            return counts.index[0] if len(counts) else None
 
+        best = _score(True) or _score(False)
+        return str(best) if best else None
+    except Exception:
+        return None
+    
 # GAAP 概念映射
 GAAP = {
     "revenue": "us-gaap:SalesRevenueNet",
@@ -564,8 +598,8 @@ def _numeric_answer_pipeline(
     if df is None:
         return None, "数值视图缺失，无法计算。（facts_numeric 未加载）", [], []
 
-    # 基础可用性检查（关键列）
-    need_cols = {"concept","value_std","fy_norm"}
+    # 关键列检查
+    need_cols = {"ticker","form","concept","value_std","fy_norm"}
     miss = [c for c in need_cols if c not in df.columns]
     if miss:
         notes.append(f"facts_numeric 缺列: {miss}")
@@ -575,6 +609,16 @@ def _numeric_answer_pipeline(
     intent = _infer_numeric_case(query, hits, filters)
     op     = intent["op"]
     args   = intent["args"]
+
+    # 如果问题涉及“营收”，尝试用数据驱动选最合适的营收概念
+    ql = (query or "").lower()
+    is_revenue_q = ("revenue" in ql) or ("net sales" in ql) or ("营收" in ql) or ("净销售额" in ql)
+    concept = args.get("concept")
+    if is_revenue_q or concept in _REVENUE_ALIASES:
+        best = _pick_best_revenue_concept(df, ticker, form, args.get("fy"))
+        if best and best != concept:
+            notes.append(f"revenue concept → {best}")
+            args["concept"] = best
 
     try:
         if op == "yoy":
@@ -923,35 +967,14 @@ def _numeric_answer_pipeline(
             rsn = f"{flavor} EPS，{fy-1}→{fy}；ticker={ticker or 'NA'}；form={form or 'NA'}。"
             return ans, rsn, cits, disp
 
-    except Exception:
-        # 进入简化回退：用 hits 推断 GAAP 概念再给出 YoY/raw
+    except Exception as ex:
         if notes:
-            logger.warning("numeric pipeline 异常，notes: %s", "; ".join(notes))
-        pass
+            logger.warning("numeric pipeline 异常：%s | notes: %s", ex, "; ".join(notes))
+        else:
+            logger.warning("numeric pipeline 异常：%s", ex)
 
-    # 回退：用 hits 推断
-    gaap_cands = _extract_gaap_candidates(hits, topn=5)
-    fy = filters.get("year") or filters.get("fy")
-    tried: List[str] = []
-    for concept in gaap_cands:
-        tried.append(concept)
-        if fy is not None:
-            v, rows, err = _compute_yoy_rows(df, ticker, form, concept, int(fy))
-            if v is not None:
-                cits, disp = _rows_to_citations(rows, hits)
-                ans = f"YoY：{_format_pct(v)}。"
-                rsn = f"概念={concept}；ticker={ticker or 'NA'}；form={form or 'NA'}；fy={fy}。"
-                return ans, rsn, cits, disp
-        cur = _get_fact(df, ticker, form, concept, int(fy) if fy else None)
-        if cur:
-            cits, disp = _rows_to_citations([cur], hits)
-            unit = cur.get("unit_std") or "money"
-            period = (cur.get("period_end") or cur.get("instant") or "NA")
-            ans = f"{concept} = {_format_money(cur['value_std']) if unit=='money' else f'{cur['value_std']:,}'}（{period}）。"
-            rsn = f"概念={concept}；ticker={ticker or 'NA'}；form={form or 'NA'}。"
-            return ans, rsn, cits, disp
-
-    return None, f"未能确定可计算的概念（尝试：{', '.join(tried) or '无'}）。", [], []
+    # 全部失败
+    return None, "数据不足" + (f" | {'; '.join(notes)}" if notes else ""), [], []
 
 
 # ======================================================================
