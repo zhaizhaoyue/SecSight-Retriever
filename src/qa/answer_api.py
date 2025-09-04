@@ -103,7 +103,7 @@ Y_REV_TRIG = ["revenue","net sales","营收","净销售额"]
 # SECTION 1) 依赖导入 & 日志
 # ======================================================================
 try:
-    from src.rag.retriever import hybrid_search
+    from src.rag.retriever.dense_retriever import hybrid_search
 except Exception as e:
     raise ImportError(f"[answer_api] 无法导入 hybrid_search：{e}")
 

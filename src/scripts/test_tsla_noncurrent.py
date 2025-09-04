@@ -5,7 +5,7 @@ import re
 import json
 import numpy as np
 from collections import defaultdict
-from src.rag.retriever import HybridRetriever
+from src.rag.retriever.dense_retriever import HybridRetriever
 from src.rag.reranker import Reranker
 
 INDEX_DIR = "data/index/faiss_bge_base_en"

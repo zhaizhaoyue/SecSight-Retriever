@@ -1,5 +1,5 @@
 # scripts/try_retriever.py
-from src.rag.retriever import FaissRetriever, HybridRetriever
+from src.rag.retriever.dense_retriever import FaissRetriever, HybridRetriever
 
 INDEX_DIR = "data/index/faiss_bge_base_en"
 QUERY = "What were Apple's noncurrent liabilities in 2023?"
