@@ -1,41 +1,69 @@
 # src/rag/retriever/hybrid.py
 # -*- coding: utf-8 -*-
 """
-Hybrid retriever: BM25F + Dense (FAISS) with z-score fusion.
-
-Example:
 python -m src.rag.retriever.hybrid `
-  --q "How did foreign exchange rates impact Tesla’s financial results in 2023?" `
+  --q "How does Tesla describe risks related to supply chain disruptions?" `
   --ticker TSLA --form 10-K --year 2023 `
-  --topk 8 --alpha 0.5 `
-  --index-dir data/index --faiss data/index/text_index.faiss --meta data/index/meta.jsonl `
+  --topk 8 `
+  --index-dir data/index `
   --content-dir data/chunked `
-  --model BAAI/bge-base-en-v1.5 --normalize
+  --model "BAAI/bge-base-en-v1.5" `
+  --normalize `
+  --w-dense 0.6 --w-bm25 0.4 `
+  --strict-id
 
-"""
+  """
 
 from __future__ import annotations
-import argparse, json, math, re
+import argparse, json, math, re, sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple, Set
+from typing import Dict, Any, List, Optional, Iterable, Tuple, Set
+from collections import Counter, defaultdict
 
-import faiss
 import numpy as np
+import faiss
 from sentence_transformers import SentenceTransformer
 
-# ---- import BM25F components from your file ----
-# 若你的包结构允许直接导入，保留如下 import；
-# 如果不允许，也可以把所需函数复制到本文件（下方已提供同名备份实现）。
-try:
-    from src.rag.retriever.bm25 import (
-        BM25FConfig, BM25FRetriever, best_snippet as bm25_best_snippet
-    )
-    _HAS_BM25_IMPORT = True
-except Exception:
-    _HAS_BM25_IMPORT = False
+# ===================== RID & audit utils =====================
+RID_RE   = re.compile(r'^\d{10}-\d{2}-\d{6}::text::chunk-\d+$')
+CHUNK_RE = re.compile(r'::text::chunk-(\d+)$')
 
-# ----------------- local helpers (与 dense / bm25f 脚本保持一致) -----------------
+def chunk_no_from_id(rid: str) -> str:
+    m = CHUNK_RE.search(rid or "")
+    return m.group(1) if m else "NA"
+
+def canon_rid(m: Dict[str, Any]) -> Optional[str]:
+    rid = m.get("id") or m.get("chunk_id")
+    if not rid:
+        return None
+    return rid if RID_RE.match(str(rid)) else None
+
+def audit_metas(metas: List[Dict[str, Any]], strict: bool = False) -> Tuple[int, int, int]:
+    bad_format = 0
+    mismatch = 0
+    for i, m in enumerate(metas, 1):
+        rid = m.get("id") or m.get("chunk_id")
+        if not rid or not RID_RE.match(str(rid)):
+            bad_format += 1
+            print(f"[AUDIT] bad rid format at meta line {i}: {rid}", file=sys.stderr)
+            continue
+        real = chunk_no_from_id(rid)
+        stored = m.get("chunk_index") or (m.get("meta", {}) or {}).get("chunk_index")
+        if stored is not None:
+            try:
+                if str(int(stored)) != str(real):
+                    mismatch += 1
+                    print(f"[AUDIT] chunk_index mismatch at line {i}: stored={stored} real={real} id={rid}", file=sys.stderr)
+            except Exception:
+                mismatch += 1
+                print(f"[AUDIT] chunk_index not int at line {i}: stored={stored} id={rid}", file=sys.stderr)
+    total = len(metas)
+    if strict and (bad_format or mismatch):
+        raise ValueError(f"[AUDIT] strict failed: bad_format={bad_format}, chunknum_mismatch={mismatch}")
+    return total, bad_format, mismatch
+
+# ----------------- meta I/O -----------------
 def load_metas(meta_path: Path) -> List[Dict[str, Any]]:
     metas: List[Dict[str, Any]] = []
     with meta_path.open("r", encoding="utf-8") as f:
@@ -48,29 +76,23 @@ def load_metas(meta_path: Path) -> List[Dict[str, Any]]:
                     flat.setdefault(k, v)
             else:
                 flat = raw
-            flat.setdefault("chunk_id", flat.get("chunk_id") or flat.get("id"))
-            flat.setdefault("file_type", flat.get("file_type") or "text")
+            rid = flat.get("id") or flat.get("chunk_id")
+            flat["chunk_id"] = rid
             flat.setdefault("title", flat.get("title") or "")
             metas.append(flat)
     return metas
 
-def _iter_text_chunk_files(base: Path) -> List[Path]:
+def _iter_jsonl_files(base: Path) -> List[Path]:
     if base.is_file():
-        # 仅当传入的就是 text_chunked.jsonl 才接受
-        return [base] if base.name.lower() == "text_chunked.jsonl" else []
-    # 递归匹配所有 text_chunked.jsonl
-    return [p for p in base.rglob("text_chunked.jsonl")]
+        return [base]
+    return sorted([p for p in base.rglob("*.jsonl")], key=lambda x: (x.parent.as_posix(), x.name))
 
-def fetch_contents(content_path: Optional[Path], chunk_ids: Set[str]) -> Dict[str, str]:
-    if not content_path:
+def fetch_contents_strict(content_path: Optional[Path], rids: Set[str], strict_id: bool = True) -> Dict[str, str]:
+    if not content_path or not rids:
         return {}
+    wanted = set(rids)
     found: Dict[str, str] = {}
-    files = _iter_text_chunk_files(content_path)   # ← 这里改为只扫 text_chunked.jsonl
-    targets = set([cid for cid in chunk_ids if cid])
-    if not targets or not files:
-        return {}
-
-    for fp in files:
+    for fp in _iter_jsonl_files(content_path):
         try:
             with fp.open("r", encoding="utf-8") as f:
                 for line in f:
@@ -78,25 +100,45 @@ def fetch_contents(content_path: Optional[Path], chunk_ids: Set[str]) -> Dict[st
                         obj = json.loads(line)
                     except Exception:
                         continue
-                    cid = obj.get("chunk_id") or obj.get("id") or obj.get("chunkId")
-                    if cid in targets:
+                    key = obj.get("id") or obj.get("chunk_id") or obj.get("chunkId")
+                    if not key:
+                        continue
+                    if strict_id and not RID_RE.match(str(key)):
+                        continue
+                    if key in wanted:
                         txt = (obj.get("content") or obj.get("text") or obj.get("raw_text")
                                or obj.get("page_text") or obj.get("body") or "")
                         if txt:
-                            found[cid] = txt
-                            targets.remove(cid)
-                            if not targets:  # 找齐提前返回
+                            found[key] = txt
+                            wanted.remove(key)
+                            if not wanted:
                                 return found
         except Exception:
             continue
+    for miss in sorted(wanted):
+        print(f"[WARN] content not found for rid={miss}", file=sys.stderr)
     return found
 
+# ----------------- tokenization -----------------
 _TOKEN_RE = re.compile(r"[A-Za-z0-9%$€¥£\.-]+", re.UNICODE)
+STOPWORDS = {
+    "the","a","an","and","or","of","in","to","for","on","by","as","at","is","are",
+    "with","its","this","that","from","which","be","we","our","their","it","was",
+    "were","has","have","had","but","not","no","can","could","would","should",
+    "may","might","will","shall","into","than","then","there","here","also"
+}
 
+def tokenize(text: str, lower: bool = True, min_len: int = 2) -> List[str]:
+    if not text:
+        return []
+    if lower:
+        text = text.lower()
+    toks = _TOKEN_RE.findall(text)
+    toks = [t for t in toks if len(t) >= min_len and t not in STOPWORDS]
+    return toks
+
+# ----------------- snippets -----------------
 def best_snippet(raw: str, q_terms: Set[str], win_chars: int = 700) -> str:
-    # 复用 bm25f 的方法（若可导入），否则本地简版
-    if _HAS_BM25_IMPORT:
-        return bm25_best_snippet(raw, q_terms, win_chars=win_chars)
     txt = (raw or "").replace("\n", " ").strip()
     if len(txt) <= win_chars:
         return txt
@@ -114,144 +156,239 @@ def best_snippet(raw: str, q_terms: Set[str], win_chars: int = 700) -> str:
     snippet = " ".join(words[best_l:best_l + 80])
     return snippet[:win_chars]
 
+# ----------------- BM25F core -----------------
+class BM25FIndex:
+    def __init__(self,
+                 docs: List[Tuple[List[str], List[str]]],
+                 k1: float = 1.5,
+                 b_title: float = 0.20,
+                 b_body: float = 0.75,
+                 w_title: float = 0.5,
+                 w_body: float = 1.0):
+        self.k1 = float(k1)
+        self.b_title = float(b_title)
+        self.b_body = float(b_body)
+        self.w_title = float(w_title)
+        self.w_body = float(w_body)
+        self.N = len(docs)
+
+        self.title_len = [len(t) for t, _ in docs]
+        self.body_len  = [len(b) for _, b in docs]
+        self.avg_t = (sum(self.title_len) / self.N) if self.N else 0.0
+        self.avg_b = (sum(self.body_len) / self.N) if self.N else 0.0
+
+        self.inv_t: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+        self.inv_b: Dict[str, List[Tuple[int, int]]] = defaultdict(list)
+        df = defaultdict(int)
+
+        for i, (toks_t, toks_b) in enumerate(docs):
+            ct, cb = Counter(toks_t), Counter(toks_b)
+            for term, tf in ct.items():
+                self.inv_t[term].append((i, tf))
+            for term, tf in cb.items():
+                self.inv_b[term].append((i, tf))
+            terms_union = set(ct.keys()) | set(cb.keys())
+            for term in terms_union:
+                df[term] += 1
+
+        self.idf: Dict[str, float] = {
+            term: math.log((self.N - dfi + 0.5) / (dfi + 0.5) + 1.0)
+            for term, dfi in df.items()
+        }
+
+    def _norm_title(self, i: int) -> float:
+        return self.k1 * (1 - self.b_title + self.b_title * (self.title_len[i] / (self.avg_t + 1e-9)))
+
+    def _norm_body(self, i: int) -> float:
+        return self.k1 * (1 - self.b_body + self.b_body * (self.body_len[i] / (self.avg_b + 1e-9)))
+
+    def scores(self, q_tokens: List[str]) -> List[float]:
+        if not q_tokens or not self.N:
+            return [0.0] * self.N
+        acc: Dict[int, float] = defaultdict(float)
+        seen_terms: Set[str] = set()
+
+        for term in q_tokens:
+            if term in seen_terms:
+                continue
+            seen_terms.add(term)
+            idf = self.idf.get(term)
+            if idf is None:
+                continue
+
+            for i, ft in self.inv_t.get(term, []):
+                denom_t = ft + self._norm_title(i)
+                contrib_t = self.w_title * (ft * (self.k1 + 1.0)) / (denom_t + 1e-12)
+                acc[i] += idf * contrib_t
+
+            for i, fb in self.inv_b.get(term, []):
+                denom_b = fb + self._norm_body(i)
+                contrib_b = self.w_body * (fb * (self.k1 + 1.0)) / (denom_b + 1e-12)
+                acc[i] += idf * contrib_b
+
+        out = [0.0] * self.N
+        for i, v in acc.items():
+            out[i] = float(v)
+        return out
+
+# ----------------- BM25F heuristics -----------------
+INCLUDE_RE = re.compile(
+    r"(item\s+1a\b|risk\s+factors?|item\s+7\b|md&a|management[’']s\s+discussion|"
+    r"consolidated\s+(statements?|balance|income|cash\s*flows)|"
+    r"net\s+sales|revenue|disaggregated|sources?\s+of\s+revenue|segment\s+information|"
+    r"geographic\s+data|by\s+product|by\s+region|by\s+category|outlook|strategy|trends?)",
+    re.I
+)
+EXCLUDE_RE = re.compile(
+    r"(report\s+of\s+independent|internal\s+control|certification|exhibit|"
+    r"signatures?\b|cover\s+page|documents\s+incorporated)", re.I
+)
+REV_BY_PRODUCT_HINT = re.compile(r"(sources?\s+of\s+revenue|by\s+product|product\s+categor(?:y|ies))", re.I)
+
+def intent_prior_bonus(m: Dict[str, Any], query: str) -> float:
+    head = " ".join(str(m.get(k, "")) for k in ("heading", "title", "section")).lower()
+    if REV_BY_PRODUCT_HINT.search(query):
+        if ("note 2" in head) or (" revenue" in head):
+            return 0.25
+        if ("segment information" in head) or ("geographic" in head):
+            return -0.10
+    return 0.0
+
+def extract_phrases(q: str) -> List[str]:
+    return [m.group(1).strip().lower() for m in re.finditer(r'"([^"]+)"', q)]
+
+def phrase_bonus(text: str, phrases: List[str], per_hit: float = 0.15, cap: float = 0.45) -> float:
+    t = (text or "").lower()
+    b = 0.0
+    for p in phrases:
+        if p and p in t:
+            b += per_hit
+    return min(cap, b)
+
+def year_proximity_bonus(m: Dict[str, Any], target_year: Optional[int]) -> float:
+    try:
+        if not target_year:
+            return 0.0
+        d = str(m.get("doc_date", ""))[:4]
+        year = int(d) if len(d) == 4 and d.isdigit() else int(m.get("fy"))
+        gap = abs(year - int(target_year))
+        return 0.20 if gap == 0 else (0.10 if gap == 1 else 0.0)
+    except Exception:
+        return 0.0
+
+def soft_section_boost(m: Dict[str, Any], body_text: str) -> float:
+    head = " ".join(str(m.get(k, "")) for k in ("heading", "title", "section")).lower()
+    bonus = 0.0
+    if "segment information" in head or re.search(r"\bnote\s+1?\d\b", head):
+        bonus += 0.25
+    if "item 7" in head or "md&a" in head:
+        bonus += 0.15
+    if "net sales" in head or "revenue" in head:
+        bonus += 0.15
+    t = (body_text or "").lower()
+    if re.search(r"\bnet\s+sales\b", t):
+        bonus += 0.10
+    if sum(bool(re.search(p, t)) for p in [r"\biphone\b", r"\bmac\b", r"\bipad\b", r"\bwearables\b", r"\bservices\b"]) >= 2:
+        bonus += 0.10
+    return min(0.60, bonus)
+
+def expand_query(q: str, ticker: Optional[str]) -> str:
+    ql = q.lower(); extra: List[str] = []
+    if ("revenue" in ql) or ("sources of revenue" in ql) or ("source of revenue" in ql):
+        extra += ["net sales", "by product", "by region", "segment information", "geographic data"]
+    if any(k in ql for k in ["q1","q2","q3","q4","quarter","three months ended"]):
+        extra += ["three months ended", "unaudited","condensed consolidated","statements of income","statements of operations"]
+    if "net income" in ql:
+        extra += ["earnings per share","statements of income","consolidated statements of income"]
+    if any(k in ql for k in ["risk","risk factors","supply chain","disruption","disruptions"]):
+        extra += ["item 1a","risk factors"]
+    if ticker and ticker.upper() == "AAPL":
+        extra += ["iphone","mac","ipad","wearables","services"]
+    return q + " " + " ".join(extra)
+
+# ----------------- Dense helpers -----------------
 def to_score(metric_type: int, dist: float) -> float:
     if metric_type == faiss.METRIC_INNER_PRODUCT:
         return float(dist)
     return 1.0 / (1.0 + float(dist))
 
-def zscore_normalize(values: List[float]) -> List[float]:
-    """
-    对一个检索通道的候选分数做 z-score 标准化。
-    - 若样本过少或方差接近 0，则回退为居中缩放：x' = x - mean。
-    """
-    arr = np.array(values, dtype=np.float64)
-    if len(arr) == 0:
-        return []
-    mean = float(arr.mean())
-    std = float(arr.std(ddof=0))
-    if std < 1e-9:
-        return [float(v - mean) for v in arr]
-    return [float((v - mean) / std) for v in arr]
+def try_get_labels_from_idmap(index):
+    try:
+        arr = faiss.vector_to_array(getattr(index, "id_map"))
+        return arr.astype(np.int64)
+    except Exception:
+        return None
 
-# ----------------- Dense 通道：只用于 query 编码 + FAISS 搜索 -----------------
-@dataclass
-class DenseConfig:
-    index_dir: str = "data/index"
-    faiss: Optional[str] = None
-    meta: Optional[str] = None
-    model: str = "BAAI/bge-base-en-v1.5"
-    device: str = "cuda"
-    normalize: bool = False
+# ----------------- normalization -----------------
+def minmax_normalize(xs: Dict[str, float]) -> Dict[str, float]:
+    if not xs:
+        return {}
+    vals = np.array(list(xs.values()), dtype=float)
+    vmin, vmax = float(np.min(vals)), float(np.max(vals))
+    if math.isclose(vmin, vmax):
+        return {k: 1.0 for k in xs}  # 单点集直接给 1.0
+    return {k: (v - vmin) / (vmax - vmin) for k, v in xs.items()}
 
-class DenseSearcher:
-    def __init__(self, cfg: DenseConfig):
-        self.cfg = cfg
-        index_dir = Path(cfg.index_dir)
-        faiss_path = Path(cfg.faiss) if cfg.faiss else (index_dir / "text_index.faiss")
-        meta_path  = Path(cfg.meta)  if cfg.meta  else (index_dir / "meta.jsonl")
-        if not faiss_path.exists() or not meta_path.exists():
-            raise FileNotFoundError(f"Missing files. faiss={faiss_path} meta={meta_path}")
+def zscore_normalize(xs: Dict[str, float]) -> Dict[str, float]:
+    if not xs:
+        return {}
+    vals = np.array(list(xs.values()), dtype=float)
+    mu, sigma = float(np.mean(vals)), float(np.std(vals)) + 1e-9
+    zs = {k: (v - mu) / sigma for k, v in xs.items()}
+    # 将 z 转到 0-1（稳定融合）
+    vvals = np.array(list(zs.values()))
+    vmin, vmax = float(np.min(vvals)), float(np.max(vvals))
+    if math.isclose(vmin, vmax):
+        return {k: 1.0 for k in zs}
+    return {k: (v - vmin) / (vmax - vmin) for k, v in zs.items()}
 
-        self.index = faiss.read_index(str(faiss_path))
-        self.metas = load_metas(meta_path)
-        if self.index.ntotal != len(self.metas):
-            raise ValueError(f"index.ntotal={self.index.ntotal} != meta lines={len(self.metas)}")
-        self.metric_type = getattr(self.index, "metric_type", faiss.METRIC_INNER_PRODUCT)
-        try:
-            self.enc = SentenceTransformer(cfg.model, device=cfg.device)
-        except Exception:
-            self.enc = SentenceTransformer(cfg.model, device="cpu")
-
-    def search(self, query: str, topk: int,
-               ticker: Optional[str], form: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
-        qvec = self.enc.encode([query], normalize_embeddings=self.cfg.normalize, show_progress_bar=False)
-        qvec = qvec.astype("float32")
-        k_search = max(topk * 100, 2000)
-        D, I = self.index.search(qvec, k_search)
-        tick = ticker.upper() if ticker else None
-        frm  = form.upper() if form else None
-        yr   = year
-
-        results: List[Dict[str, Any]] = []
-        for dist, idx in zip(D[0], I[0]):
-            if idx < 0:
-                continue
-            m = self.metas[idx]
-            if tick and str(m.get("ticker","")).upper() != tick:
-                continue
-            if frm and str(m.get("form","")).upper() != frm:
-                continue
-            if yr is not None:
-                try:
-                    if int(m.get("fy")) != int(yr):
-                        continue
-                except Exception:
-                    continue
-            results.append({
-                "chunk_id": m.get("chunk_id"),
-                "score": to_score(self.metric_type, float(dist)),
-                "meta": m,
-                "faiss_id": int(idx),
-            })
-            if len(results) >= topk:
-                break
-        return results
-
-# ----------------- Hybrid 检索器 -----------------
+# ----------------- config -----------------
 @dataclass
 class HybridConfig:
-    # common
     index_dir: str = "data/index"
     meta: Optional[str] = None
-    # content
+    faiss_path: Optional[str] = None
     content_path: Optional[str] = None
     content_dir: Optional[str] = None
-    # fusion
-    alpha: float = 0.5  # 权重给 BM25F，(1 - alpha) 给 Dense
-    # bm25f params (可按需透传)
+    model: str = "BAAI/bge-base-en-v1.5"
+    device: str = "cuda"
+    normalize_query: bool = False
+    # tokenization
+    min_token_len: int = 2
+    # BM25F params
     k1: float = 1.5
     b_title: float = 0.20
     b_body: float = 0.75
-    w_title: float = 2.5
+    w_title: float = 0.5
     w_body: float = 1.0
-    min_token_len: int = 2
-    # dense params
-    model: str = "BAAI/bge-base-en-v1.5"
-    device: str = "cuda"
-    normalize: bool = False
-    # candidate pool sizes
-    bm25_pool: int = 64
-    dense_pool: int = 64
+    # fusion
+    w_dense: float = 0.6
+    w_bm25: float = 0.4
+    norm: str = "minmax"   # or "zscore"
+    dense_k_search: int = 2000
+    dense_overfetch: int = 100
+    # 防错位
+    strict_id: bool = True
+    audit_only: bool = False
 
+# ----------------- Hybrid Retriever -----------------
 class HybridRetriever:
-    def __init__(self, cfg: HybridConfig, faiss_path: Optional[str] = None):
+    def __init__(self, cfg: HybridConfig):
         self.cfg = cfg
+        meta_path = Path(cfg.meta) if cfg.meta else Path(cfg.index_dir) / "meta.jsonl"
+        if not meta_path.exists():
+            raise FileNotFoundError(f"meta.jsonl not found at {meta_path}")
+        self.metas = load_metas(meta_path)
 
-        # ---- Dense searcher ----
-        self.dense = DenseSearcher(DenseConfig(
-            index_dir=cfg.index_dir,
-            faiss=faiss_path,
-            meta=cfg.meta,
-            model=cfg.model,
-            device=cfg.device,
-            normalize=cfg.normalize
-        ))
+        total, bad, mis = audit_metas(self.metas, strict=False)
+        if bad or mis:
+            print(f"[AUDIT] total={total} bad_format={bad} chunknum_mismatch={mis}", file=sys.stderr)
+            if cfg.strict_id:
+                print("[AUDIT] strict_id=True -> content fetch enforces full rid matching.", file=sys.stderr)
+        if cfg.audit_only:
+            return
 
-        # ---- BM25F retriever ----
-        if _HAS_BM25_IMPORT:
-            bm_cfg = BM25FConfig(
-                index_dir=cfg.index_dir, meta=cfg.meta,
-                content_path=cfg.content_path, content_dir=cfg.content_dir,
-                k1=cfg.k1, b_title=cfg.b_title, b_body=cfg.b_body,
-                w_title=cfg.w_title, w_body=cfg.w_body,
-                min_token_len=cfg.min_token_len
-            )
-            self.bm25 = BM25FRetriever(bm_cfg)
-        else:
-            # 如果无法 import，你需要把 BM25FRetriever 复制进来或确保可导入
-            raise ImportError("Cannot import BM25FRetriever. Ensure src.rag.retriever.bm25f is importable.")
-
-        # 内容源
+        # content root
         if cfg.content_path:
             self.content_root = Path(cfg.content_path)
         elif cfg.content_dir:
@@ -259,157 +396,323 @@ class HybridRetriever:
         else:
             self.content_root = None
 
-    def _collect_candidates(
-        self, query: str, ticker: Optional[str], form: Optional[str], year: Optional[int]
-    ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-        bm_hits = self.bm25.search(query, topk=self.cfg.bm25_pool, ticker=ticker, form=form, year=year)
-        dn_hits = self.dense.search(query, topk=self.cfg.dense_pool, ticker=ticker, form=form, year=year)
-        return bm_hits, dn_hits
+        # faiss
+        fpath = Path(cfg.faiss_path) if cfg.faiss_path else (Path(cfg.index_dir) / "text_index.faiss")
+        if fpath.exists():
+            self.index = faiss.read_index(str(fpath))
+            self.metric_type = getattr(self.index, "metric_type", faiss.METRIC_INNER_PRODUCT)
+        else:
+            self.index = None
+            self.metric_type = faiss.METRIC_INNER_PRODUCT
+            print(f"[WARN] FAISS not found at {fpath}, dense branch disabled.", file=sys.stderr)
 
-    def _zscore_fuse(
-        self,
-        bm_hits: List[Dict[str, Any]],
-        dn_hits: List[Dict[str, Any]],
-        alpha: float
-    ) -> List[Tuple[str, float]]:
-        """
-        输入两路命中列表（各自包含 chunk_id + 原始 score）。
-        输出：[(chunk_id, fused_score), ...]，按 fused_score 降序。
-        """
-        # 取各自的分数并 z-score
-        bm_scores = [h["score"] for h in bm_hits]
-        dn_scores = [h["score"] for h in dn_hits]
-        bm_z = zscore_normalize(bm_scores)
-        dn_z = zscore_normalize(dn_scores)
+        # idmap labels (if any)
+        self.labels = try_get_labels_from_idmap(self.index) if self.index is not None else None
+        self.label2meta = None
+        if self.index is not None:
+            if self.labels is not None:
+                if len(self.labels) != len(self.metas):
+                    raise ValueError(f"idmap labels ({len(self.labels)}) != metas ({len(self.metas)})")
+                self.label2meta = {int(lbl): self.metas[i] for i, lbl in enumerate(self.labels)}
+            else:
+                if self.index.ntotal != len(self.metas):
+                    raise ValueError(f"index.ntotal={self.index.ntotal} != meta lines={len(self.metas)} (one-to-one required)")
 
-        # 建立映射
-        bm_map: Dict[str, float] = {}
-        for h, z in zip(bm_hits, bm_z):
-            cid = h.get("chunk_id")
-            if cid:
-                bm_map[cid] = z
+        # encoder
+        self.encoder = None
+        if self.index is not None:
+            try:
+                self.encoder = SentenceTransformer(cfg.model, device=cfg.device)
+            except Exception:
+                self.encoder = SentenceTransformer(cfg.model, device="cpu")
 
-        dn_map: Dict[str, float] = {}
-        for h, z in zip(dn_hits, dn_z):
-            cid = h.get("chunk_id")
-            if cid:
-                dn_map[cid] = z
+    # ---- filters ----
+    def _apply_meta_filters(self, ticker: Optional[str], form: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
+        tick = ticker.upper() if ticker else None
+        frm = form.upper() if form else None
+        out: List[Dict[str, Any]] = []
+        for m in self.metas:
+            rid = canon_rid(m)
+            if not rid:
+                continue
+            if tick and str(m.get("ticker", "")).upper() != tick:
+                continue
+            if frm and str(m.get("form", "")).upper() != frm:
+                continue
+            if year is not None:
+                try:
+                    if int(m.get("fy")) != int(year):
+                        continue
+                except Exception:
+                    continue
+            m["_rid"] = rid
+            out.append(m)
+        return out
 
-        # 候选并集
-        all_ids: Set[str] = set(bm_map.keys()) | set(dn_map.keys())
+    def _section_prefilter(self, candidates: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        heads = [" ".join(str(m.get(k, "")) for k in ("heading","title","section")) for m in candidates]
+        pre = [m for m, h in zip(candidates, heads) if INCLUDE_RE.search(h) and not EXCLUDE_RE.search(h)]
+        if pre and (len(pre) >= max(200, int(0.2 * len(candidates)))):
+            return pre
+        return candidates
 
-        fused: List[Tuple[str, float]] = []
-        for cid in all_ids:
-            z_bm = bm_map.get(cid, None)
-            z_dn = dn_map.get(cid, None)
+    # ---- dense branch ----
+    def _dense_search(self, query: str, ticker: Optional[str], form: Optional[str], year: Optional[int], topk: int) -> Dict[str, float]:
+        if self.index is None or self.encoder is None:
+            return {}
+        qvec = self.encoder.encode([query], normalize_embeddings=self.cfg.normalize_query, show_progress_bar=False).astype("float32")
+        k_search = max(self.cfg.dense_overfetch * topk, self.cfg.dense_k_search)
+        D, I = self.index.search(qvec, k_search)
 
-            # 缺失的一路赋予一个较低的惩罚值（-3），避免被完全抹除
-            if z_bm is None: z_bm = -3.0
-            if z_dn is None: z_dn = -3.0
+        tick = ticker.upper() if ticker else None
+        frm  = form.upper() if form else None
+        dense_scores: Dict[str, float] = {}
+        for dist, idx in zip(D[0], I[0]):
+            if idx < 0:
+                continue
+            if self.label2meta is not None:
+                m = self.label2meta.get(int(idx))
+                if m is None:
+                    continue
+            else:
+                if not (0 <= idx < len(self.metas)):
+                    continue
+                m = self.metas[int(idx)]
 
-            fused_score = alpha * z_bm + (1.0 - alpha) * z_dn
-            fused.append((cid, float(fused_score)))
+            rid = canon_rid(m)
+            if not rid:
+                continue
+            if tick and str(m.get("ticker","")).upper() != tick:
+                continue
+            if frm and str(m.get("form","")).upper() != frm:
+                continue
+            if year is not None:
+                try:
+                    if int(m.get("fy")) != int(year):
+                        continue
+                except Exception:
+                    continue
+            score = to_score(self.metric_type, float(dist))
+            if rid not in dense_scores:
+                dense_scores[rid] = float(score)
+            if len(dense_scores) >= max(1, topk * 5):  # 先收窄
+                break
+        return dense_scores
 
-        fused.sort(key=lambda x: x[1], reverse=True)
-        return fused
+    # ---- bm25f branch ----
+    def _bm25f_scores(self, query: str, ticker: Optional[str], form: Optional[str], year: Optional[int]) -> Tuple[Dict[str, float], Dict[str, str], Dict[str, Dict[str, Any]]]:
+        cands = self._apply_meta_filters(ticker, form, year)
+        if not cands:
+            return {}, {}, {}
+        cands = self._section_prefilter(cands)
+
+        if not self.content_root:
+            raise ValueError("Hybrid needs text: set HybridConfig.content_dir or content_path.")
+        need_rids = {m["_rid"] for m in cands if m.get("_rid")}
+        id2txt = fetch_contents_strict(self.content_root, need_rids, strict_id=self.cfg.strict_id)
+
+        # build docs
+        doc_metas: List[Dict[str, Any]] = []
+        docs_tokens: List[Tuple[List[str], List[str]]] = []
+        raw_texts: List[str] = []
+        titles_raw: List[str] = []
+
+        for m in cands:
+            rid = m.get("_rid")
+            raw = id2txt.get(rid, "")
+            if not raw:
+                continue
+            title_str = " ".join(str(m.get(k, "")) for k in ("heading","title","section")).strip()
+            t_tokens = tokenize(title_str, lower=True, min_len=self.cfg.min_token_len)
+            b_tokens = tokenize(raw, lower=True, min_len=self.cfg.min_token_len)
+            if not (t_tokens or b_tokens):
+                continue
+            doc_metas.append(m)
+            docs_tokens.append((t_tokens, b_tokens))
+            raw_texts.append(raw)
+            titles_raw.append(title_str)
+
+        if not docs_tokens:
+            return {}, {}, {}
+
+        bm25f = BM25FIndex(
+            docs_tokens,
+            k1=self.cfg.k1, b_title=self.cfg.b_title, b_body=self.cfg.b_body,
+            w_title=self.cfg.w_title, w_body=self.cfg.w_body
+        )
+        q_expanded = expand_query(query, ticker)
+        q_tokens = tokenize(q_expanded, lower=True, min_len=self.cfg.min_token_len)
+        phrases = extract_phrases(query)
+
+        base_scores = bm25f.scores(q_tokens)
+        bm25_scores: Dict[str, float] = {}
+        rid2raw: Dict[str, str] = {}
+        rid2meta: Dict[str, Dict[str, Any]] = {}
+
+        for i, base in enumerate(base_scores):
+            if base <= 0.0:
+                continue
+            m = doc_metas[i]
+            rid = m.get("_rid")
+            body_text = raw_texts[i]
+            head = titles_raw[i] if i < len(titles_raw) else ""
+
+            bonus = 0.0
+            bonus += soft_section_boost(m, body_text)
+            bonus += phrase_bonus(body_text, phrases, per_hit=0.15, cap=0.45)
+            bonus += year_proximity_bonus(m, year)
+            bonus += intent_prior_bonus(m, query)
+            # 简单 narrative 提升（轻量版本）
+            if ("item 7" in head.lower()) or ("md&a" in head.lower()):
+                bonus += 0.20
+            bonus = min(0.80, bonus)
+
+            score = base * (1.0 + bonus)
+            bm25_scores[rid] = float(score)
+            rid2raw[rid] = body_text
+            rid2meta[rid] = m
+
+        return bm25_scores, rid2raw, rid2meta
+
+    # ---- fusion ----
+    def _normalize(self, xs: Dict[str, float]) -> Dict[str, float]:
+        if self.cfg.norm == "zscore":
+            return zscore_normalize(xs)
+        return minmax_normalize(xs)
 
     def search(self, query: str, topk: int,
-               ticker: Optional[str] = None, form: Optional[str] = None, year: Optional[int] = None) -> List[Dict[str, Any]]:
-        bm_hits, dn_hits = self._collect_candidates(query, ticker, form, year)
-
-        if not bm_hits and not dn_hits:
+               ticker: Optional[str], form: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
+        if self.cfg.audit_only:
+            print("[INFO] audit-only mode: no search executed.")
             return []
 
-        fused = self._zscore_fuse(bm_hits, dn_hits, self.cfg.alpha)
+        # 先跑 BM25F（需要正文）以稳住语义范围
+        bm25_scores, rid2raw, rid2meta = self._bm25f_scores(query, ticker, form, year)
+
+        # 再跑 Dense；密集检索不依赖正文，可更大范围 overfetch
+        dense_scores = self._dense_search(query, ticker, form, year, topk=topk)
+
+        if not bm25_scores and not dense_scores:
+            return []
+
+        # 归一化
+        bm25_norm = self._normalize(bm25_scores) if bm25_scores else {}
+        dense_norm = self._normalize(dense_scores) if dense_scores else {}
+
+        # 融合
+        w_d = float(self.cfg.w_dense)
+        w_b = float(self.cfg.w_bm25)
+        rids = set(bm25_norm) | set(dense_norm)
+
+        fused: List[Tuple[str, float]] = []
+        for rid in rids:
+            s_d = dense_norm.get(rid, 0.0)
+            s_b = bm25_norm.get(rid, 0.0)
+            score = w_d * s_d + w_b * s_b
+            fused.append((rid, float(score)))
+
+        # 排序 + 去重（rid 唯一）
+        fused.sort(key=lambda x: x[1], reverse=True)
         fused = fused[:max(1, topk)]
 
-        # 组装最终输出（优先从 bm25 命中条目拿 meta/snippet，否则从 dense）
-        cid2bm = {h["chunk_id"]: h for h in bm_hits if h.get("chunk_id")}
-        cid2dn = {h["chunk_id"]: h for h in dn_hits if h.get("chunk_id")}
-
-        # 收集需要的正文
-        need_ids = {cid for cid, _ in fused}
-        id2txt: Dict[str, str] = {}
+        # 补全 snippet 所需正文（对 dense-only 命中也要补）
         if self.content_root:
-            id2txt = fetch_contents(self.content_root, need_ids)
+            need_more = {rid for rid, _ in fused if rid not in rid2raw}
+            if need_more:
+                extra = fetch_contents_strict(self.content_root, need_more, strict_id=self.cfg.strict_id)
+                rid2raw.update(extra)
 
-        # query terms for snippet
-        q_tokens = {t.lower() for t in _TOKEN_RE.findall(query)}
+        q_terms_for_snippet = set(tokenize(query, lower=True, min_len=self.cfg.min_token_len))
+
         out: List[Dict[str, Any]] = []
-        for rank, (cid, fused_score) in enumerate(fused, 1):
-            src_hit = cid2bm.get(cid) or cid2dn.get(cid)
-            meta = (cid2bm.get(cid) or cid2dn.get(cid) or {}).get("meta", {})
-            raw = id2txt.get(cid, "")
-            snippet = raw and best_snippet(raw, q_tokens, win_chars=500) or (meta.get("title") or "")
+        for rank, (rid, s) in enumerate(fused, 1):
+            m = rid2meta.get(rid)
+            # 如果是 dense-only 命中，meta 需要回填
+            if m is None:
+                # 在 metas 中线性找（数量大时可建索引；这里依赖 label2meta 已经覆盖大部分场景）
+                m = next((mm for mm in self.metas if (mm.get("id") == rid or mm.get("chunk_id") == rid)), None)
+                if m is None:
+                    # 最差兜底：构造一个最小 meta
+                    m = {"ticker": "", "fy": "", "form": "", "heading": "", "title": "", "section": "", "_rid": rid}
+            raw = rid2raw.get(rid, "")
+            snippet = best_snippet(raw, q_terms_for_snippet, win_chars=500) if raw else (m.get("title") or "")
             out.append({
                 "rank": rank,
-                "score": float(fused_score),
-                "chunk_id": cid,
-                "meta": meta,
+                "score": float(s),
+                "id": rid,
+                "chunk": chunk_no_from_id(rid),
+                "meta": m,
                 "snippet": snippet,
-                "source": "hybrid(zscore)",
-                "bm25_score": float(cid2bm[cid]["score"]) if cid in cid2bm else None,
-                "dense_score": float(cid2dn[cid]["score"]) if cid in cid2dn else None,
+                "source": "hybrid(w_d={:.2f},w_b={:.2f},{})".format(w_d, w_b, self.cfg.norm),
             })
         return out
 
 # ----------------- CLI -----------------
 def _cli():
-    ap = argparse.ArgumentParser(description="Hybrid retriever: BM25F + Dense (z-score fusion)")
-    # common index/meta/content
+    ap = argparse.ArgumentParser(description="Hybrid (Dense + BM25F) retriever")
     ap.add_argument("--index-dir", default="data/index")
+    ap.add_argument("--faiss", dest="faiss_path", default=None)
     ap.add_argument("--meta", default=None)
     ap.add_argument("--content-path", default=None)
     ap.add_argument("--content-dir", default=None)
-    # query & filters
+    ap.add_argument("--model", default="BAAI/bge-base-en-v1.5")
+    ap.add_argument("--device", default="cuda")
+    ap.add_argument("--normalize", dest="normalize_query", action="store_true", default=False,
+                    help="Normalize query embedding (use if index vectors were normalized + inner-product).")
     ap.add_argument("--q", "--query", dest="query", required=True)
     ap.add_argument("--topk", type=int, default=8)
     ap.add_argument("--ticker"); ap.add_argument("--form"); ap.add_argument("--year", type=int)
-    # fusion
-    ap.add_argument("--alpha", type=float, default=0.5, help="weight for BM25F after z-score")
-    ap.add_argument("--bm25-pool", type=int, default=64)
-    ap.add_argument("--dense-pool", type=int, default=64)
-    # bm25f params
+    # tokenization
+    ap.add_argument("--min-token-len", type=int, default=2)
+    # BM25F params
     ap.add_argument("--k1", type=float, default=1.5)
     ap.add_argument("--b-title", type=float, default=0.20)
     ap.add_argument("--b-body", type=float, default=0.75)
-    ap.add_argument("--w-title", type=float, default=2.5)
+    ap.add_argument("--w-title", type=float, default=0.5)
     ap.add_argument("--w-body", type=float, default=1.0)
-    ap.add_argument("--min-token-len", type=int, default=2)
-    # dense params
-    ap.add_argument("--faiss", default=None, help="path to text_index.faiss")
-    ap.add_argument("--model", default="BAAI/bge-base-en-v1.5")
-    ap.add_argument("--device", default="cuda")
-    ap.add_argument("--normalize", action="store_true")
+    # fusion
+    ap.add_argument("--w-dense", type=float, default=0.6)
+    ap.add_argument("--w-bm25", type=float, default=0.4)
+    ap.add_argument("--norm", choices=["minmax","zscore"], default="minmax")
+    ap.add_argument("--dense-k-search", type=int, default=2000)
+    ap.add_argument("--dense-overfetch", type=int, default=100)
+    # 防错位
+    ap.add_argument("--strict-id", dest="strict_id", action="store_true", default=True)
+    ap.add_argument("--no-strict-id", dest="strict_id", action="store_false")
+    ap.add_argument("--audit-only", action="store_true")
 
     args = ap.parse_args()
-
     cfg = HybridConfig(
-        index_dir=args.index_dir, meta=args.meta,
+        index_dir=args.index_dir, meta=args.meta, faiss_path=args.faiss_path,
         content_path=args.content_path, content_dir=args.content_dir,
-        alpha=args.alpha,
+        model=args.model, device=args.device, normalize_query=args.normalize_query,
+        min_token_len=args.min_token_len,
         k1=args.k1, b_title=args.b_title, b_body=args.b_body,
-        w_title=args.w_title, w_body=args.w_body, min_token_len=args.min_token_len,
-        model=args.model, device=args.device, normalize=args.normalize,
-        bm25_pool=max(1, args.bm25_pool), dense_pool=max(1, args.dense_pool),
+        w_title=args.w_title, w_body=args.w_body,
+        w_dense=args.w_dense, w_bm25=args.w_bm25,
+        norm=args.norm, dense_k_search=args.dense_k_search, dense_overfetch=args.dense_overfetch,
+        strict_id=args.strict_id, audit_only=args.audit_only
     )
 
-    retr = HybridRetriever(cfg, faiss_path=args.faiss)
-    hits = retr.search(args.query, topk=args.topk, ticker=args.ticker, form=args.form, year=args.year)
+    retr = HybridRetriever(cfg)
 
+    if args.audit_only:
+        print("[DONE] audit-only finished.")
+        return
+
+    hits = retr.search(args.query, topk=args.topk, ticker=args.ticker, form=args.form, year=args.year)
     if not hits:
         print("[INFO] No hits.")
         return
+
     print(f"Query: {args.query}\n" + "="*80)
     for r in hits:
-        m = r["meta"] or {}
+        m = r["meta"]
         heading = " ".join(str(m.get(k,"")) for k in ("heading","title","section"))
-        print(f"[{r['rank']:02d}] fused={r['score']:.6f} "
-              f"(bm25={r['bm25_score'] if r['bm25_score'] is not None else 'NA'}, "
-              f"dense={r['dense_score'] if r['dense_score'] is not None else 'NA'}) "
-              f"| {m.get('ticker')} {m.get('fy')} {m.get('form')} "
-              f"| chunk={m.get('chunk_index')} | id={r['chunk_id']}")
-        print(f"     heading: {heading[:120]}")
+        print(f"[{r['rank']:02d}] score={r['score']:.6f} | {m.get('ticker')} {m.get('fy')} {m.get('form')} "
+              f"| chunk={r['chunk']} | id={r['id']}")
+        if heading:
+            print(f"     heading: {heading[:160]}")
         print(f"     {r['snippet']}")
         print("-"*80)
 

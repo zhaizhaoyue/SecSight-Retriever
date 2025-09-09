@@ -6,9 +6,9 @@ inverted index acceleration, meta filters, soft prior boosts (section/year/phras
 and better snippets.
 
 CLI (example)
-python -m src.rag.retriever.bm25 `
-  --q "How did foreign exchange rates impact Tesla’s financial results in 2023?" `
-  --ticker TSLA --form "10-K" --year 2023 `
+python -m src.rag.retriever.bm25f `
+  --q "What is the year-over-year change in Amazon’s advertising revenue in 2023?" `
+  --ticker AMZN --form "10-K" --year 2023 `
   --topk 8 `
   --index-dir data/index `
   --content-dir data/chunked
@@ -139,17 +139,29 @@ STOPWORDS = {
     "may","might","will","shall","into","than","then","there","here","also"
 }
 NARR_RE = re.compile(r"\b(item\s+7\b|md&a|item\s*1a\b|risk\s+factors|strategy|outlook|trend)\b", re.I)
+FIN_PHRASES = [
+    "net sales","total net sales","research and development","operating expenses",
+    "foreign currency","other income (expense)","advertising services",
+    "disaggregated revenue","segment information","note 2","note 13"
+]
+def phrase_hint_bonus(text: str, per_hit: float = 0.08, cap: float = 0.32) -> float:
+    t = (text or "").lower()
+    hits = sum(1 for p in FIN_PHRASES if p in t)
+    return min(cap, hits * per_hit)
 
-def narrative_boost(head: str, body: str, intents: Dict[str,bool]) -> float:
+def narrative_boost(head: str, body: str, intents: Dict[str,bool], ql: str = "") -> float:
     h = (head or "").lower(); b = (body or "").lower()
     boost = 0.0
-    if "risk" in b or "risk factor" in b or "item 1a" in h:
-        boost += 0.25
-    if "md&a" in h or "item 7" in h or "management’s discussion" in b:
+    # 仅当查询含 risk 相关且正文也出现 risk 时再加
+    if ("risk" in ql or "risk factor" in ql or "item 1a" in ql) and ("risk" in b or "risk factor" in b):
         boost += 0.20
-    if any(k in b for k in ["strategy","strategic","growth driver","growth drivers","key drivers"]):
+    if ("md&a" in h or "item 7" in h) and any(w in ql for w in ["trend","outlook","driver","strategy"]):
         boost += 0.15
-    return min(0.35, boost)
+    # 对与查询明显不符的“网络安全”给微弱负分，避免把所有风险都顶上来
+    if any(k in ql for k in ["supply chain","supplier","shortage","logistics"]) and "cyber" in b:
+        boost -= 0.10
+    return max(-0.10, min(0.30, boost))
+
 
 def tokenize(text: str, lower: bool = True, min_len: int = 2) -> List[str]:
     if not text:
@@ -320,6 +332,7 @@ def soft_section_boost(m: Dict[str, Any], body_text: str) -> float:
         bonus += 0.10
     if sum(bool(re.search(p, t)) for p in [r"\biphone\b", r"\bmac\b", r"\bipad\b", r"\bwearables\b", r"\bservices\b"]) >= 2:
         bonus += 0.10
+    bonus += phrase_hint_bonus(body_text)
     return min(0.60, bonus)
 
 # ----------------- config & retriever -----------------
@@ -392,18 +405,49 @@ class BM25FRetriever:
         return out
 
     def _expand_query(self, q: str, ticker: Optional[str]) -> str:
-        ql = q.lower(); extra: List[str] = []
-        if ("revenue" in ql) or ("sources of revenue" in ql) or ("source of revenue" in ql):
-            extra += ["net sales", "by product", "by region", "segment information", "geographic data"]
-        if any(k in ql for k in ["q1","q2","q3","q4","quarter","three months ended"]):
-            extra += ["three months ended", "unaudited","condensed consolidated","statements of income","statements of operations"]
-        if "net income" in ql:
-            extra += ["earnings per share","statements of income","consolidated statements of income"]
-        if any(k in ql for k in ["risk","risk factors","supply chain","disruption","disruptions"]):
-            extra += ["item 1a","risk factors"]
-        if ticker and ticker.upper() == "AAPL":
-            extra += ["iphone","mac","ipad","wearables","services"]
+        ql = q.lower(); extra = []
+
+        # —— 常见财报等价词 —— #
+        if any(k in ql for k in ["advertising","ads","ad revenue"]):
+            extra += ["advertising services","sponsored ads","ad sales","ad revenue growth","marketing services"]
+        if any(k in ql for k in ["research and development","r&d","rnd"]):
+            extra += ["research & development","research and development expense"]
+        if any(k in ql for k in ["operating expenses","opex"]):
+            extra += ["selling general and administrative","sga","research and development"]
+        if any(k in ql for k in ["data center","datacenter","dc revenue"]):
+            extra += ["compute & networking","segment information"]
+
+        # —— YoY/增长类 —— #
+        if any(k in ql for k in ["yoy","year-over-year","year over year","compare","vs","versus"]):
+            extra += ["compared to 2022","increased","decreased","change","%","percentage","growth"]
+
+        # —— FX 影响 —— #
+        if "foreign exchange" in ql or "fx" in ql or "currency" in ql:
+            extra += ["foreign currency","fx impact","exchange rates","other income (expense)"]
+
+        # —— 供应链风险 —— #
+        if any(k in ql for k in ["supply chain","supplier","disruption","shortage"]):
+            extra += ["logistics","raw materials","components","semiconductor","shortages","delays","suppliers"]
+
+        # —— 季度（Q1~Q4）与 10-Q 语言映射 —— #
+        if any(k in ql for k in ["q1","q2","q3","q4","quarter"]):
+            extra += ["three months ended","(unaudited)","condensed consolidated","statements of operations",
+                    "income statements"]
+
+        # —— 产品拆分 —— #
+        if "breakdown" in ql or "by product" in ql:
+            extra += ["net sales","disaggregated","significant products and services","note 2","segment information"]
+
+        # —— 品牌特定线索（已有 AAPL，可再加） —— #
+        if ticker:
+            t = ticker.upper()
+            if t == "AAPL": extra += ["iphone","mac","ipad","wearables","services","note 2 – revenue"]
+            if t == "MSFT": extra += ["office 365","azure","intelligent cloud","productivity and business processes"]
+            if t == "AMZN": extra += ["aws","advertising services","sponsored products"]
+            if t == "NVDA": extra += ["data center","gaming","segment information"]
+
         return q + " " + " ".join(extra)
+
 
     # public API
     def search(self, query: str, topk: int = 8,
