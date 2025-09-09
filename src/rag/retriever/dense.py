@@ -3,7 +3,7 @@
 
 
 python -m src.rag.retriever.dense `
-  --q "What did Microsoft highlight as key growth drivers in 2023?" `
+  --q "Which segment grew the fastest for Microsoft in 2023?" `
   --ticker MSFT `
   --form 10-K `
   --year 2023 `
