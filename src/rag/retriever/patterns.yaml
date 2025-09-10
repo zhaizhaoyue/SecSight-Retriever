@@ -1,0 +1,337 @@
+# patterns.yaml
+
+# -------------------------
+# 1) 预筛：哪些 heading/section 优先保留
+# -------------------------
+include_patterns:
+  - '(item\s+7\b|md&a|management[’'']s\s+discussion)'
+  - '(item\s*1a\b|risk\s+factors?)'
+  - '(consolidated\s+(statements?|balance|income|cash\s*flows))'
+  - '(notes?\s+to\s+consolidated\s+financial\s+statements)'
+  - '(segment\s+information|disaggregated\s+revenue|significant\s+products?\s+and\s+services)'
+  - '(net\s+sales|revenue|by\s+product|by\s+region|by\s+category|geographic\s+data)'
+  - '(outlook|guidance|trend|trends|strategy)'
+  - '(liquidity\s+and\s+capital\s+resources|results\s+of\s+operations)'
+  - '(foreign\s+currency|exchange\s+rates|fx)'
+  - '(share\s+repurchases?|buybacks?|dividends?)'
+  - '(non\-gaap|adjusted\s+(ebit|ebitda|eps))'
+  - '(stock\-based\s+compensation|sbc)'
+  - '(free\s+cash\s+flow|fcf|capex|capital\s+expenditure)'
+  - '(customer\s+metrics|mau|dau|arpu|churn|retention)'
+  - '(backlog|bookings|remaining\s+performance\s+obligations|rpo)'
+
+# -------------------------
+# 2) 剔除：一般无关的页
+# -------------------------
+exclude_patterns:
+  - '(report\s+of\s+independent.*public\s+accounting\s+firm)'
+  - '(internal\s+control\s+over\s+financial\s+reporting)'
+  - '(exhibit|exhibits|index\s+of\s+exhibits)'
+  - '(signatures?\b|power\s+of\s+attorney)'
+  - '(cover\s+page|cover\s+sheet)'
+  - '(glossary|appendix)'
+  - '(safe\s+harbor|forward\-looking\s+statements)'
+  # 如需保留“legal proceedings”，请删除下一行：
+  - '(legal\s+proceedings\s*$)'
+
+# -------------------------
+# 3) 财报高频短语（给片段/bonus 提示用）
+# -------------------------
+fin_phrases:
+  - 'net sales'
+  - 'total net sales'
+  - 'revenue'
+  - 'disaggregated revenue'
+  - 'segment information'
+  - 'research and development'
+  - 'operating expenses'
+  - 'selling, general and administrative'
+  - 'cost of revenue'
+  - 'cost of sales'
+  - 'gross margin'
+  - 'operating margin'
+  - 'operating income'
+  - 'net income'
+  - 'earnings per share'
+  - 'diluted eps'
+  - 'guidance'
+  - 'outlook'
+  - 'foreign currency'
+  - 'exchange rates'
+  - 'hedging'
+  - 'other income (expense)'
+  - 'free cash flow'
+  - 'capital expenditures'
+  - 'working capital'
+  - 'deferred revenue'
+  - 'remaining performance obligations'
+  - 'stock-based compensation'
+  - 'share repurchase'
+  - 'dividends'
+  - 'liquidity and capital resources'
+  - 'results of operations'
+  - 'md&a'
+  - 'item 7'
+  - 'item 1a'
+  - 'note 2'
+  - 'note 13'
+
+# -------------------------
+# 4) 查询扩展（触发正则：扩展词列表）
+#    → Dense/BM25F 都可在检索前对 query 做语义补全
+# -------------------------
+query_expansions:
+
+  # 增长/对比
+  'yoy|year[\-\s]*over[\-\s]*year|y\/y|yoY':
+    - 'increased'
+    - 'decreased'
+    - 'change'
+    - 'growth'
+    - 'compared to'
+    - 'percentage'
+    - '%'
+  'qoq|quarter[\-\s]*over[\-\s]*quarter|q\/q':
+    - 'sequential'
+    - 'quarterly change'
+    - 'three months ended'
+
+  'advertising revenue|ad revenue|ad sales':
+    - 'advertising services'
+    - 'sponsored ads'
+    - 'display advertising'
+    - 'video advertising'
+  # 收入/利润结构
+  'rev|revenue|net\s+sales':
+    - 'disaggregated revenue'
+    - 'segment information'
+    - 'by product'
+    - 'by region'
+    - 'significant products and services'
+  'cogs|cost\s+of\s+goods\s+sold|cost\s+of\s+sales':
+    - 'cost of revenue'
+    - 'gross margin'
+  'gm|gross\s+margin':
+    - 'cost of revenue'
+    - 'cost of sales'
+    - 'pricing'
+  'op\s*margin|operating\s+margin':
+    - 'operating income'
+    - 'opex'
+  'opex|operating\s+expenses':
+    - 'selling, general and administrative'
+    - 'sga'
+    - 'research and development'
+  'r&d|rnd|research\s+and\s+development':
+    - 'research & development'
+    - 'product development'
+  'ebitda|ebit':
+    - 'operating income'
+    - 'non-gaap'
+    - 'adjusted ebitda'
+
+  # 现金流/资本开支
+  'fcf|free\s+cash\s+flow':
+    - 'operating cash flow'
+    - 'capital expenditures'
+    - 'working capital'
+  'capex|capital\s+expenditure(s)?':
+    - 'property and equipment'
+    - 'investing cash flows'
+
+  # 资本结构/股东回报
+  'buyback|repurchase':
+    - 'share repurchase'
+    - 'accelerated share repurchase'
+  'dividend|payout':
+    - 'dividend yield'
+    - 'payout ratio'
+  'sbc|stock[\-\s]*based\s+compensation':
+    - 'equity awards'
+    - 'share-based compensation'
+  'diluted\s+eps|eps':
+    - 'earnings per share'
+    - 'net income'
+
+  # 指引/宏观/汇率
+  'guidance|outlook':
+    - 'md&a'
+    - 'results of operations'
+  'fx|foreign\s+exchange|currency':
+    - 'exchange rates'
+    - 'hedging'
+    - 'other income (expense)'
+
+  # SaaS/平台指标
+  'mau|dau|arpu|churn|retention':
+    - 'customer metrics'
+    - 'engagement'
+  'backlog|bookings|rpo|remaining\s+performance\s+obligations':
+    - 'deferred revenue'
+    - 'contracted not recognized'
+  'advertising|ads|ad\s+revenue':
+    - 'advertising services'
+    - 'sponsored ads'
+    - 'ad sales'
+
+  # 季度语言（10-Q）
+  'q1|q2|q3|q4|quarter':
+    - 'three months ended'
+    - '(unaudited)'
+    - 'condensed consolidated'
+    - 'statements of operations'
+    - 'income statements'
+
+  # 常见主题
+  'supply\s+chain|supplier|shortage|logistics':
+    - 'raw materials'
+    - 'components'
+    - 'semiconductor'
+    - 'delays'
+    - 'constraints'
+  'ai|artificial\s+intelligence':
+    - 'machine learning'
+    - 'model training'
+    - 'accelerated computing'
+  'datacenter|data\s*center|dc':
+    - 'compute and networking'
+    - 'inference'
+    - 'training workload'
+
+# -------------------------
+# 5) 公司专属词表（Ticker → 词汇）
+#    用于 query 扩展/bonus；按需增删
+# -------------------------
+ticker_hints:
+  AAPL:
+    - 'iphone'
+    - 'mac'
+    - 'ipad'
+    - 'wearables'
+    - 'services'
+    - 'app store'
+    - 'apple music'
+    - 'icloud'
+    - 'note 2 – revenue'
+    - 'by product'
+    - 'by geographic region'
+
+  MSFT:
+    - 'azure'
+    - 'office 365'
+    - 'microsoft 365'
+    - 'windows'
+    - 'linkedin'
+    - 'gaming'
+    - 'xbox'
+    - 'intelligent cloud'
+    - 'productivity and business processes'
+    - 'more personal computing'
+    - 'copilot'
+    - 'github'
+
+  AMZN:
+    - 'aws'
+    - 'amazon web services'
+    - 'north america segment'
+    - 'international segment'
+    - 'third-party seller services'
+    - 'subscription services'
+    - 'advertising services'
+    - 'prime'
+    - 'fulfillment'
+    - 'logistics'
+    - 'sponsored products'
+
+  GOOGL:
+    - 'google services'
+    - 'google cloud'
+    - 'other bets'
+    - 'youtube ads'
+    - 'search & other'
+    - 'network'
+    - 'tac'            # traffic acquisition costs
+    - 'play'
+    - 'workspace'
+    - 'pixel'
+    - 'android'
+
+  META:
+    - 'family of apps'
+    - 'family of apps revenue'
+    - 'reality labs'
+    - 'instagram'
+    - 'facebook'
+    - 'whatsapp'
+    - 'threads'
+    - 'maus'
+    - 'daus'
+    - 'arpu'
+    - 'ads'
+    - 'reels'
+
+  TSLA:
+    - 'automotive segment'
+    - 'regulatory credits'
+    - 'energy generation and storage'
+    - 'energy storage'
+    - 'services and other'
+    - 'full self-driving'
+    - 'fsd'
+    - 'model 3'
+    - 'model y'
+    - 'cybertruck'
+    - 'supercharging'
+
+  NVDA:
+    - 'data center'
+    - 'gaming'
+    - 'professional visualization'
+    - 'automotive'
+    - 'oem and other'
+    - 'accelerated computing'
+    - 'cuda'
+    - 'inference'
+    - 'training'
+    - 'h100'
+    - 'gh200'
+    - 'r100'
+
+  BRK:
+    - 'insurance and other'
+    - 'bnsf'        # railway
+    - 'bhel'        # berkshire hathaway energy (often BHE)
+    - 'berkshire hathaway energy'
+    - 'manufacturing service and retailing'
+    - 'geico'
+    - 'general re'
+    - 'precision castparts'
+    - 'lubrizol'
+
+  JPM:
+    - 'consumer & community banking'
+    - 'c&cb'
+    - 'corporate & investment bank'
+    - 'cib'
+    - 'asset & wealth management'
+    - 'awm'
+    - 'net interest income'
+    - 'trading revenue'
+    - 'investment banking fees'
+    - 'credit provision'
+    - 'basel'
+    - 'tier 1 capital'
+    - 'tangible book value'
+
+  JNJ:
+    - 'medtech'
+    - 'pharmaceutical'
+    - 'innovative medicine'
+    - 'medical devices'
+    - 'orthopaedics'
+    - 'surgery'
+    - 'vision'
+    - 'consumer health'   # 历史拆分，可留作检索
+    - 'immunology'
+    - 'oncology'
+    - 'neuroscience'
