@@ -3,12 +3,12 @@
 BM25 retriever — TEXT-ONLY, compact & generalized
 
 python -m src.rag.retriever.bm25_text `
-  --q "How does Google explain its strategy for AI and cloud computing?" `
+  --q "Tell me about Google’s expenses related to Research and Development?" `
   --ticker GOOGL --form 10-K --year 2024 `
-  --content-dir data/chunked --index-dir data/index `
-  --rerank --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2
+  --content-dir data/chunked --index-dir data/index 
 
 """
+
 from __future__ import annotations
 import argparse, json, math, re, sys
 from dataclasses import dataclass
@@ -27,10 +27,10 @@ RID_RE   = re.compile(r"^\d{10}-\d{2}-\d{6}::text::chunk-\d+$")
 CHUNK_RE = re.compile(r"::text::chunk-(\d+)$")
 
 TOKEN_RE = re.compile(r"[A-Za-z0-9%$€¥£\.-]+", re.UNICODE)
-STOPWORDS = frozenset({"the","a","an","and","or","of","in","to","for","on","by","as","at","is","are",
-    "with","its","this","that","from","which","be","we","our","their","it","was",
-    "were","has","have","had","but","not","no","can","could","would","should",
-    "may","might","will","shall","into","than","then","there","here","also"})
+STOPWORDS = frozenset({"the", "a", "an", "and", "or", "of", "in", "to", "for", "on", "by", "as", "at", "is", "are",
+    "with", "its", "this", "that", "from", "which", "be", "we", "our", "their", "it", "was", "were", "has", "have",
+    "had", "but", "not", "no", "can", "could", "would", "should", "may", "might", "will", "shall", "into", "than",
+    "then", "there", "here", "also"})
 
 # =============================================================================
 # IO: meta & text
@@ -77,7 +77,7 @@ def audit_metas(metas: Sequence[Dict[str, Any]], strict: bool = False, tag: str 
 def fetch_contents(content_root: Optional[Path], rids: Sequence[str], strict_id: bool = True) -> Dict[str, str]:
     if not content_root or not rids: return {}
     wanted = set(rids); found: Dict[str, str] = {}
-    # 遍历 content_dir 下所有 jsonl，按 id 匹配文本   # [UNCHANGED]
+    # 遍历 content_dir 下所有 jsonl，按 id 匹配文本
     for fp in ( [content_root] if content_root.is_file() else sorted(content_root.rglob("*.jsonl"), key=lambda x: (x.parent.as_posix(), x.name)) ):
         try:
             with fp.open("r", encoding="utf-8") as f:
@@ -90,7 +90,6 @@ def fetch_contents(content_root: Optional[Path], rids: Sequence[str], strict_id:
                     if not key: continue
                     if strict_id and not RID_RE.match(str(key)): continue
                     if key in wanted:
-                        # 仅“文本”字段：无标题权重、无数值加成            # [CHANGED]
                         txt = obj.get("content") or obj.get("text") or obj.get("raw_text") or obj.get("page_text") or obj.get("body") or ""
                         if txt:
                             found[key] = txt; wanted.remove(key)
@@ -109,7 +108,6 @@ def tokenize(text: str, lower: bool = True, min_len: int = 2) -> List[str]:
     return [t for t in TOKEN_RE.findall(text) if len(t) >= min_len and t not in STOPWORDS]
 
 def best_snippet(raw: str, q_terms: set[str], win_chars: int = 700) -> str:
-    """简洁的基于命中词的窗口摘要（仅文本）"""         # [CHANGED: 去掉 numeric-intent]
     txt = (raw or "").replace("\n"," ").strip()
     if len(txt) <= win_chars: return txt
     words = txt.split(); qset = {t.lower().strip(".,;:()") for t in q_terms if t}
@@ -126,7 +124,6 @@ def best_snippet(raw: str, q_terms: set[str], win_chars: int = 700) -> str:
 # BM25 (TEXT ONLY)
 # =============================================================================
 class BM25Index:
-    """标准 Okapi BM25（单字段文本），无标题/字段权重。"""   # [ADDED]
     def __init__(self, docs: Sequence[List[str]], k1=1.5, b=0.75) -> None:
         self.k1, self.b = float(k1), float(b)
         self.N = len(docs)
@@ -140,7 +137,6 @@ class BM25Index:
                 self.inv[term].append((i, tf))
             for term in c.keys():
                 df[term] += 1
-        # 标准 idf（加 1 平滑防负无穷）                       # [ADDED]
         self.idf = {term: math.log((self.N - dfi + 0.5) / (dfi + 0.5) + 1.0) for term, dfi in df.items()}
 
     def _norm(self, i: int) -> float:
@@ -166,7 +162,7 @@ class BM25Index:
 # =============================================================================
 # Retriever (TEXT ONLY)
 # =============================================================================
-class CrossEncoderReranker:  # [ADDED]
+class CrossEncoderReranker:
     def __init__(self, model_name: str, device: Optional[str] = None):
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
@@ -174,14 +170,13 @@ class CrossEncoderReranker:  # [ADDED]
         self.model.eval()
 
     def rerank(self, query: str, docs: List[str]) -> List[float]:
-        """Return cross-encoder scores for (query, doc) pairs"""
         pairs = [(query, d) for d in docs]
         enc = self.tokenizer(pairs, padding=True, truncation=True, return_tensors="pt", max_length=512)
         with torch.no_grad():
             outputs = self.model(**{k:v.to(self.device) for k,v in enc.items()})
-            if outputs.logits.shape[1] == 1:  # regression
+            if outputs.logits.shape[1] == 1:
                 scores = outputs.logits.squeeze(-1).cpu().tolist()
-            else:  # classification, take positive class
+            else:
                 scores = torch.softmax(outputs.logits, dim=1)[:,1].cpu().tolist()
         return scores
 
@@ -199,8 +194,8 @@ class BM25TextConfig:
     b: float = 0.75
     strict_id: bool = True
     audit_only: bool = False
-    rerank: bool = False                # [ADDED]
-    rerank_model: Optional[str] = None  # [ADDED]
+    rerank: bool = False
+    rerank_model: Optional[str] = None
 
 class BM25TextRetriever:
     def __init__(self, cfg: BM25TextConfig):
@@ -323,9 +318,9 @@ def _cli() -> None:
     ap.add_argument("--strict-id", dest="strict_id", action="store_true", default=True)
     ap.add_argument("--no-strict-id", dest="strict_id", action="store_false")
     ap.add_argument("--audit-only", action="store_true")
-    # [ADDED for cross-encoder]
-    ap.add_argument("--rerank", action="store_true", help="Enable cross-encoder rerank")
-    ap.add_argument("--rerank-model", default=None, help="HuggingFace cross-encoder model name")
+    ap.add_argument("--rerank", dest="rerank", action="store_true", default=True)
+    ap.add_argument("--no-rerank", dest="rerank", action="store_false")
+    ap.add_argument("--rerank-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2", help="HuggingFace cross-encoder model name")
     args = ap.parse_args()
 
     cfg = BM25TextConfig(

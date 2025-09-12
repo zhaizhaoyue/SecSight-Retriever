@@ -4,18 +4,18 @@ Pure dense (bi-encoder) retriever with optional Cross-Encoder rerank.
 
 Usage:
 python -m src.rag.retriever.dense `
-  --q "Tell me about Google’s expenses related to R&D." `
+  --q "Tell me about Google’s expenses related to Research and Development." `
   --ticker GOOGL --form 10-K --year 2024 `
   --topk 8 --normalize `
   --content-dir data/chunked `
   --rerank --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `
   --fusion linear --alpha 0.75 --pretopk-mult 5 --batch-size 16 --max-length 512
-
 """
 from __future__ import annotations
 import argparse, json
 from pathlib import Path
 from typing import Dict, Any, List, Optional, Set, Tuple
+
 import faiss
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -137,7 +137,188 @@ def fuse_scores(bm: Optional[List[float]], de: List[float], ce: Optional[List[fl
     a = float(alpha)
     return [a * ce_n[i] + (1.0 - a) * de_n[i] for i in range(len(de_n))]
 
-# ---------------- main ----------------
+# ======================= NEW: DenseRetriever (最小改动抽类) =======================
+class DenseRetriever:
+    """
+    可在程序内被 import 使用的检索器。保留与原 CLI 相同的行为与排序逻辑。
+    """
+    def __init__(
+        self,
+        index_dir: str = "data/index",
+        faiss_path: Optional[str] = None,
+        meta_path: Optional[str] = None,
+        model: str = "BAAI/bge-base-en-v1.5",
+        device: str = "cuda",
+        normalize: bool = False,
+        pretopk_mult: int = 5,
+        batch_size: int = 16,
+        max_length: int = 512,
+        rerank_model_default: str = "cross-encoder/ms-marco-MiniLM-L-6-v2",
+        fusion: str = "ce",
+        alpha: float = 0.6,
+    ):
+        # 路径
+        self.index_dir = Path(index_dir)
+        self.faiss_path = Path(faiss_path) if faiss_path else (self.index_dir / "text_index.faiss")
+        self.meta_path  = Path(meta_path)  if meta_path  else (self.index_dir / "meta.jsonl")
+        if not self.faiss_path.exists() or not self.meta_path.exists():
+            raise FileNotFoundError(f"Missing files. faiss={self.faiss_path} meta={self.meta_path}")
+
+        # 载入索引与元数据
+        self.index = faiss.read_index(str(self.faiss_path))
+        self.metas = load_metas(self.meta_path)
+        if self.index.ntotal != len(self.metas):
+            raise ValueError(f"index.ntotal={self.index.ntotal} != meta lines={len(self.metas)} (one-to-one required)")
+        self.metric_type = getattr(self.index, "metric_type", faiss.METRIC_INNER_PRODUCT)
+
+        # 可选 IDMap
+        def _try_idmap_labels(index):
+            try:
+                arr = faiss.vector_to_array(getattr(index, "id_map"))
+                return arr.astype(np.int64)
+            except Exception:
+                return None
+        self.labels = _try_idmap_labels(self.index)
+        self.label2meta = {int(lbl): self.metas[i] for i, lbl in enumerate(self.labels)} if self.labels is not None else None
+
+        # 编码器
+        try:
+            self.enc = SentenceTransformer(model, device=device)
+        except Exception:
+            self.enc = SentenceTransformer(model, device="cpu")
+
+        # 运行参数（保持与原脚本一致）
+        self.device = device
+        self.normalize = bool(normalize)
+        self.pretopk_mult = int(pretopk_mult)
+        self.batch_size = int(batch_size)
+        self.max_length = int(max_length)
+        self.rerank_model_default = rerank_model_default
+        self.fusion = fusion
+        self.alpha = float(alpha)
+
+    def search(
+        self,
+        query: str,
+        topk: int = 8,
+        *,
+        ticker: Optional[str] = None,
+        form: Optional[str] = None,
+        year: Optional[int] = None,
+        content_path: Optional[str] = None,
+        content_dir: Optional[str] = None,
+        rerank: bool = False,
+        rerank_model: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        返回结构化结果列表（已按最终分数降序）：
+        [{
+           "rank": int,
+           "final_score": float,
+           "dense_score": float,
+           "ce_score": Optional[float],
+           "id": str,
+           "meta": dict,
+           "snippet": str,
+         }, ...]
+        """
+        # 3) encode query
+        qvec = self.enc.encode([query], normalize_embeddings=self.normalize, show_progress_bar=False)
+        qvec = qvec.astype("float32")
+
+        # 4) vector search
+        k_search = max(topk * max(self.pretopk_mult, 1) * 5, 2000)
+        D, I = self.index.search(qvec, k_search)
+
+        # 5) filter by meta
+        tick = ticker.upper() if ticker else None
+        frm  = form.upper() if form else None
+
+        candidates: List[Tuple[float, Dict[str, Any], int]] = []  # (dense_score, meta, faiss_id)
+        for dist, idx in zip(D[0], I[0]):
+            if idx < 0:
+                continue
+            m = self.label2meta.get(int(idx)) if self.label2meta is not None else (self.metas[int(idx)] if 0 <= idx < len(self.metas) else None)
+            if m is None:
+                continue
+            if tick and str(m.get("ticker","")).upper() != tick:
+                continue
+            if frm  and str(m.get("form","")).upper() != frm:
+                continue
+            if year is not None:
+                try:
+                    if int(m.get("fy")) != int(year):
+                        continue
+                except Exception:
+                    continue
+            candidates.append((to_score(self.metric_type, float(dist)), m, int(idx)))
+            if len(candidates) >= topk * max(self.pretopk_mult, 1):
+                break
+
+        if not candidates:
+            return []
+
+        # 6) contents for snippets + CE inputs
+        content_root: Optional[Path] = None
+        if content_path:
+            content_root = Path(content_path)
+        elif content_dir:
+            content_root = Path(content_dir)
+
+        contents: Dict[str, str] = {}
+        if content_root:
+            ids_needed = { m.get("chunk_id") for _, m, _ in candidates if m.get("chunk_id") }
+            contents = fetch_contents(content_root, ids_needed)
+
+        # prepare texts for CE (fallback to title if no content)
+        ce_docs: List[str] = []
+        for _, m, _ in candidates:
+            cid = m.get("chunk_id")
+            text = contents.get(cid) or m.get("title") or ""
+            if len(text) > 4000:
+                text = text[:4000]
+            ce_docs.append(text if text else " ")
+
+        dense_scores = [c[0] for c in candidates]
+
+        # 7) optional rerank
+        ce_scores: Optional[List[float]] = None
+        if rerank:
+            reranker = CrossEncoderReranker(
+                model_name=(rerank_model or self.rerank_model_default),
+                device=(self.device if self.device in {"cuda","cpu"} else None),
+                max_length=self.max_length,
+                batch_size=self.batch_size
+            )
+            ce_scores = reranker.score(query, ce_docs)
+
+        # 8) final scoring & sort
+        final_scores = fuse_scores(
+            bm=None, de=dense_scores, ce=ce_scores,
+            mode=self.fusion, alpha=self.alpha, norm="minmax"
+        )
+        ranked = sorted(
+            list(zip(final_scores, candidates, ce_scores if ce_scores else [None]*len(candidates))),
+            key=lambda x: x[0], reverse=True
+        )[:topk]
+
+        # 9) build structured records
+        records: List[Dict[str, Any]] = []
+        for i, (fsc, (dsc, m, fid), csc) in enumerate(ranked, 1):
+            cid = m.get("chunk_id")
+            snippet = contents.get(cid) or m.get("title") or ""
+            records.append({
+                "rank": i,
+                "final_score": float(fsc),
+                "dense_score": float(dsc),
+                "ce_score": (float(csc) if csc is not None else None),
+                "id": cid,
+                "meta": m,
+                "snippet": snippet[:500].replace("\n"," ")
+            })
+        return records
+
+# ---------------- main (保持原CLI，但内部改用 DenseRetriever) ----------------
 def main():
     ap = argparse.ArgumentParser(description="Dense retriever with optional cross-encoder rerank")
     ap.add_argument("--index-dir", default="data/index", help="folder with text_index.faiss + meta.jsonl")
@@ -160,7 +341,8 @@ def main():
     ap.add_argument("--content-dir", default=None)
 
     # rerank options
-    ap.add_argument("--rerank", action="store_true")
+    ap.add_argument("--rerank", dest="rerank", action="store_true", default=True)
+    ap.add_argument("--no-rerank", dest="rerank", action="store_false")
     ap.add_argument("--rerank-model", default="cross-encoder/ms-marco-MiniLM-L-6-v2")
     ap.add_argument("--fusion", choices=["ce", "dense", "linear"], default="ce",
                     help="final scoring mode after rerank")
@@ -168,129 +350,55 @@ def main():
     ap.add_argument("--pretopk-mult", type=int, default=5, help="collect topk*mult candidates before rerank")
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-length", type=int, default=512)
+
+    # (可选) JSON 输出，便于 Hybrid 调用
+    ap.add_argument("--json-out", action="store_true", help="print JSON array records instead of pretty text")
     args = ap.parse_args()
 
-    index_dir = Path(args.index_dir)
-    faiss_path = Path(args.faiss) if args.faiss else (index_dir / "text_index.faiss")
-    meta_path  = Path(args.meta)  if args.meta  else (index_dir / "meta.jsonl")
-    if not faiss_path.exists() or not meta_path.exists():
-        raise FileNotFoundError(f"Missing files. faiss={faiss_path} meta={meta_path}")
+    retr = DenseRetriever(
+        index_dir=args.index_dir,
+        faiss_path=args.faiss,
+        meta_path=args.meta,
+        model=args.model,
+        device=args.device,
+        normalize=args.normalize,
+        pretopk_mult=args.pretopk_mult,
+        batch_size=args.batch_size,
+        max_length=args.max_length,
+        fusion=args.fusion,
+        alpha=args.alpha,
+    )
 
-    # 1) load FAISS & metas
-    index = faiss.read_index(str(faiss_path))
-    metas = load_metas(meta_path)
-    if index.ntotal != len(metas):
-        raise ValueError(f"index.ntotal={index.ntotal} != meta lines={len(metas)} (one-to-one required)")
-    metric_type = getattr(index, "metric_type", faiss.METRIC_INNER_PRODUCT)
+    records = retr.search(
+        query=args.query,
+        topk=args.topk,
+        ticker=args.ticker,
+        form=args.form,
+        year=args.year,
+        content_path=args.content_path,
+        content_dir=args.content_dir,
+        rerank=args.rerank,
+        rerank_model=args.rerank_model
+    )
 
-    # optional IDMap
-    def try_get_labels_from_idmap(index):
-        try:
-            arr = faiss.vector_to_array(getattr(index, "id_map"))
-            return arr.astype(np.int64)
-        except Exception:
-            return None
-
-    labels = try_get_labels_from_idmap(index)
-    label2meta = {int(lbl): metas[i] for i, lbl in enumerate(labels)} if labels is not None else None
-
-    # 2) encoder (query)
-    try:
-        enc = SentenceTransformer(args.model, device=args.device)
-    except Exception:
-        enc = SentenceTransformer(args.model, device="cpu")
-
-    # 3) encode query
-    qvec = enc.encode([args.query], normalize_embeddings=args.normalize, show_progress_bar=False)
-    qvec = qvec.astype("float32")
-
-    # 4) vector search (NOTE: uses args.pretopk_mult)
-    k_search = max(args.topk * max(args.pretopk_mult, 1) * 5, 2000)
-    D, I = index.search(qvec, k_search)
-
-    # 5) filter by meta
-    tick = args.ticker.upper() if args.ticker else None
-    form = args.form.upper() if args.form else None
-    year = args.year
-
-    candidates: List[Tuple[float, Dict[str, Any], int]] = []  # (dense_score, meta, faiss_id)
-    for dist, idx in zip(D[0], I[0]):
-        if idx < 0:
-            continue
-        m = label2meta.get(int(idx)) if label2meta is not None else (metas[int(idx)] if 0 <= idx < len(metas) else None)
-        if m is None:
-            continue
-        if tick and str(m.get("ticker","")).upper() != tick:
-            continue
-        if form and str(m.get("form","")).upper() != form:
-            continue
-        if year is not None:
-            try:
-                if int(m.get("fy")) != int(year):
-                    continue
-            except Exception:
-                continue
-        candidates.append((to_score(metric_type, float(dist)), m, int(idx)))
-        if len(candidates) >= args.topk * max(args.pretopk_mult, 1):
-            break
-
-    if not candidates:
+    if not records:
         print("[INFO] No hits after filters. Try removing filters or --topk larger.")
         return
 
-    # 6) contents for snippets + CE inputs
-    content_root: Optional[Path] = None
-    if args.content_path:
-        content_root = Path(args.content_path)
-    elif args.content_dir:
-        content_root = Path(args.content_dir)
+    if args.json_out:
+        print(json.dumps(records, ensure_ascii=False))
+        return
 
-    contents: Dict[str, str] = {}
-    if content_root:
-        ids_needed = { m.get("chunk_id") for _, m, _ in candidates if m.get("chunk_id") }
-        contents = fetch_contents(content_root, ids_needed)
-
-    # prepare texts for CE (fallback to title if no content)
-    ce_docs: List[str] = []
-    for _, m, _ in candidates:
-        cid = m.get("chunk_id")
-        text = contents.get(cid) or m.get("title") or ""
-        if len(text) > 4000:
-            text = text[:4000]
-        ce_docs.append(text if text else " ")
-
-    dense_scores = [c[0] for c in candidates]
-
-    # 7) optional rerank
-    ce_scores: Optional[List[float]] = None
-    if args.rerank:
-        reranker = CrossEncoderReranker(
-            model_name=args.rerank_model,
-            device=(args.device if args.device in {"cuda","cpu"} else None),
-            max_length=args.max_length,
-            batch_size=args.batch_size
-        )
-        ce_scores = reranker.score(args.query, ce_docs)
-
-    # 8) final scoring & sort
-    final_scores = fuse_scores(
-        bm=None, de=dense_scores, ce=ce_scores,
-        mode=args.fusion, alpha=args.alpha, norm="minmax"
-    )
-    ranked = sorted(
-        list(zip(final_scores, candidates, ce_scores if ce_scores else [None]*len(candidates))),
-        key=lambda x: x[0], reverse=True
-    )[:args.topk]
-
-    # 9) print
+    # 保持原有人类可读输出风格
     print(f"Query: {args.query}")
     print("="*80)
-    for i, (fsc, (dsc, m, fid), csc) in enumerate(ranked, 1):
-        cid = m.get("chunk_id")
-        snippet = contents.get(cid) or m.get("title") or ""
-        print(f"[{i:02d}] score={fsc:.4f} | dense={dsc:.4f}" + (f" | ce={csc:.4f}" if csc is not None else "") +
-              f" | {m.get('ticker')} {m.get('fy')} {m.get('form')} | chunk={m.get('chunk_index')} | id={cid}")
-        print("     ", snippet[:240].replace("\n"," "))
+    for r in records:
+        m = r["meta"]
+        cid = r["id"]
+        ce_part = (f" | ce={r['ce_score']:.4f}" if r["ce_score"] is not None else "")
+        print(f"[{r['rank']:02d}] score={r['final_score']:.4f} | dense={r['dense_score']:.4f}{ce_part} "
+              f"| {m.get('ticker')} {m.get('fy')} {m.get('form')} | chunk={m.get('chunk_index')} | id={cid}")
+        print("     ", r["snippet"])
         print("-"*80)
 
 if __name__ == "__main__":
