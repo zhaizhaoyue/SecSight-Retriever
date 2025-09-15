@@ -4,8 +4,8 @@ Pure dense (bi-encoder) retriever with optional Cross-Encoder rerank.
 
 Usage:
 python -m src.rag.retriever.dense `
-  --q "Tell me about Google’s expenses related to Research and Development." `
-  --ticker GOOGL --form 10-K --year 2024 `
+  --q "What risks did Meta highlight about regulatory scrutiny in its 2023 10-K" `
+  --ticker META --form 10-K --year 2023 `
   --topk 8 --normalize `
   --content-dir data/chunked `
   --rerank --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `

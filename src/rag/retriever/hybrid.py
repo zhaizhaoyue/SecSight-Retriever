@@ -2,21 +2,20 @@
 
 
 '''
+
+  
 python -m src.rag.retriever.hybrid `
-  --query "Tell me about Google’s expenses related to Research and Development?" `
+  --query "What risks did Meta highlight about regulatory scrutiny in its 2023 10-K?" `
   --index-dir data/index `
   --content-dir data/chunked `
   --model BAAI/bge-base-en-v1.5 `
-  --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `
-  --ticker GOOGL `
-  --form "10-K" `
-  --year 2024 `
+  --ticker META --form "10-K" --year 2023 `
   --topk 8 `
-  --k 60 `
-  --show-chars 1000 `
-  --w-bm25 1.0 `
-  --w-dense 2.0 `
-  --ce-weight 0.01
+  --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
+  --w-bm25 1.0 --w-dense 2.0 `
+  --ce-weight 0.3 `
+  --show-chars 1000
+
 
 
 
@@ -36,7 +35,12 @@ from src.rag.retriever.dense import DenseRetriever
 # ---------------- Cross-Encoder reranker ----------------
 class CrossEncoderReranker:
     def __init__(self, model_name: str, device: Optional[str] = None, max_length: int = 512, batch_size: int = 16):
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        # Robust device selection with fallback
+        if device is None:
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        elif str(device).startswith("cuda") and not torch.cuda.is_available():
+            device = "cpu"
+        self.device = device
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
         self.model = AutoModelForSequenceClassification.from_pretrained(model_name).to(self.device)
         self.model.eval()
@@ -105,7 +109,7 @@ def fetch_contents(content_root: Optional[Path], chunk_ids: Set[str]) -> Dict[st
 # ---------------- Hybrid (RRF + 全局 CE 重排) ----------------
 class HybridRetrieverRRF:
     def __init__(self, bm25_cfg: BM25TextConfig, dense: DenseRetriever,
-                 reranker: CrossEncoderReranker, k: float = 60.0, w_bm25: float = 2.0, w_dense: float = 2.0,
+                     reranker: Optional[CrossEncoderReranker], k: float = 60.0, w_bm25: float = 2.0, w_dense: float = 2.0,
                  ce_weight: float = 0.5):
         self.bm25 = BM25TextRetriever(bm25_cfg)
         self.dense = dense
@@ -115,7 +119,7 @@ class HybridRetrieverRRF:
         self.w_dense = float(w_dense)
         self.ce_weight = float(ce_weight)
 
-    def _rrf(self, bm25_results: List[Dict[str, Any]], dense_results: List[Dict[str, Any]], topk: int) -> List[Dict[str, Any]]:
+    def _rrf(self, bm25_results, dense_results, ce_candidates: int) -> List[Dict[str, Any]]:
         # 名次表（从 1 开始）
         bm25_rank = {r["id"]: i+1 for i, r in enumerate(bm25_results)}
         dense_rank = {r["id"]: i+1 for i, r in enumerate(dense_results)}
@@ -138,7 +142,6 @@ class HybridRetrieverRRF:
 
         fused: List[Dict[str, Any]] = []
         for rid, rec in pool.items():
-            dense_only_bonus = 0.002
             rb = bm25_rank.get(rid)
             rd = dense_rank.get(rid)
             rrf = 0.0
@@ -157,21 +160,49 @@ class HybridRetrieverRRF:
 
         fused.sort(key=lambda x: x["rrf_score"], reverse=True)
         # 给 CE 留更大的候选池
-        return fused[:max(1, topk * 3)]
+        return fused[:max(1, int(ce_candidates))]
 
+    def _apply_filters(self, results: List[Dict[str, Any]], *, ticker: Optional[str], form: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
+        if not results:
+            return results
+        if not (ticker or form or year):
+            return results
+        out = []
+        for r in results:
+            m = r.get("meta", {}) or {}
+            if ticker and m.get("ticker") != ticker:
+                continue
+            if form and m.get("form") != form:
+                continue
+            if year is not None:
+                fy = m.get("fy") or m.get("year")
+                try:
+                    if int(fy) != int(year):
+                        continue
+                except Exception:
+                    continue
+            out.append(r)
+        return out
 
     def search(self, query: str, topk: int = 8, *,
-               content_path: Optional[str] = None, content_dir: Optional[str] = None,
-               **filters) -> List[Dict[str, Any]]:
-
-        bm25_results = self.bm25.search(query, topk=topk, **filters) or []
-        dense_results = self.dense.search(query, topk=topk, content_path=content_path,
-                                          content_dir=content_dir, **filters) or []
+            content_path: Optional[str] = None, content_dir: Optional[str] = None,
+            bm25_topk: int = 200, dense_topk: int = 200, ce_candidates: int = 256,
+            strict_filters: bool = True,
+            **filters) -> List[Dict[str, Any]]:
+        # 默认启用过滤
+        pass_filters = filters if strict_filters else {}
+        bm25_results = self.bm25.search(query, topk=bm25_topk, **pass_filters) or []
+        dense_results = self.dense.search(query, topk=dense_topk, content_path=content_path,
+                                        content_dir=content_dir, **pass_filters) or []
+        # 检索后再做一次后置过滤，防止底层检索器不支持或元数据缺失
+        if strict_filters:
+            bm25_results = self._apply_filters(bm25_results, ticker=filters.get("ticker"), form=filters.get("form"), year=filters.get("year"))
+            dense_results = self._apply_filters(dense_results, ticker=filters.get("ticker"), form=filters.get("form"), year=filters.get("year"))
 
         if not bm25_results and not dense_results:
             return []
 
-        fused = self._rrf(bm25_results, dense_results, topk=topk)
+        fused = self._rrf(bm25_results, dense_results, ce_candidates=ce_candidates)
 
         root: Optional[Path] = None
         if content_path:
@@ -185,7 +216,15 @@ class HybridRetrieverRRF:
             contents = fetch_contents(root, ids_needed)
 
         ce_docs = [contents.get(rec["id"]) or rec["snippet"] or " " for rec in fused]
-        ce_scores = self.reranker.score(query, ce_docs)
+        if (self.reranker is None) or (self.ce_weight <= 1e-6) or (ce_candidates <= 0):
+            ce_scores = [0.0] * len(fused)
+        else:
+            ce_scores = self.reranker.score(query, ce_docs)
+            # 归一化到 [0,1]，稳住与 RRF 的量纲
+            lo, hi = min(ce_scores), max(ce_scores)
+            if hi > lo:
+                ce_scores = [(s - lo) / (hi - lo) for s in ce_scores]
+
 
         # 加权融合：将 RRF 和 CE 结果加权合并
         out: List[Dict[str, Any]] = []
@@ -224,6 +263,10 @@ def _cli():
     ap.add_argument("--w-bm25", type=float, default=1.0)
     ap.add_argument("--w-dense", type=float, default=2.0)
     ap.add_argument("--ce-weight", type=float, default=0.5, help="weight for CE rerank (default=0.5)")
+    ap.add_argument("--bm25-topk", type=int, default=200, help="BM25候选条数（用于RRF融合前）")
+    ap.add_argument("--dense-topk", type=int, default=200, help="Dense候选条数（用于RRF融合前）")
+    ap.add_argument("--ce-candidates", type=int, default=256, help="送入CE的候选池大小")
+
 
     # filters
     ap.add_argument("--ticker"); ap.add_argument("--form"); ap.add_argument("--year", type=int)
@@ -233,15 +276,20 @@ def _cli():
     bm25_cfg = BM25TextConfig(index_dir=args.index_dir)
     dense = DenseRetriever(index_dir=args.index_dir, model=args.model, device=args.device)
 
-    reranker = CrossEncoderReranker(model_name=args.rerank_model)
+    reranker = None
+    if (args.ce_weight is None) or (args.ce_weight > 1e-6 and args.ce_candidates > 0):
+        reranker = CrossEncoderReranker(model_name=args.rerank_model, device=args.device)
+
 
     hybrid = HybridRetrieverRRF(bm25_cfg, dense, reranker, k=args.k, w_bm25=args.w_bm25, w_dense=args.w_dense, ce_weight=args.ce_weight)
 
     records = hybrid.search(
         query=args.query, topk=args.topk,
         content_path=args.content_path, content_dir=args.content_dir,
+        bm25_topk=args.bm25_topk, dense_topk=args.dense_topk, ce_candidates=args.ce_candidates,
         ticker=args.ticker, form=args.form, year=args.year
     )
+
 
     if not records:
         print("[INFO] No hits after fusion.")
@@ -258,9 +306,12 @@ def _cli():
         m = r.get("meta", {})
         rid = r["id"]
         title = (m.get("title") or m.get("heading") or m.get("section") or "")[:160]
-        score = r.get("rerank_score") or r.get("ce_score") or r.get("rrf_score", 0.0)
-        print(f"[{i:02d}] score={score:.4f} | rrf={r['rrf_score']:.4f} "
-              f"| {m.get('ticker')} {m.get('fy')} {m.get('form')} | id={rid}")
+        score_final = r.get("final_score", 0.0)
+        score_ce    = r.get("ce_score", 0.0)
+        score_rrf   = r.get("rrf_score", 0.0)
+        print(f"[{i:02d}] final={score_final:.4f} | ce={score_ce:.4f} | rrf={score_rrf:.4f} "
+            f"| {m.get('ticker')} {m.get('fy')} {m.get('form')} | id={rid}")
+
         if title:
             print(f"     title: {title}")
         # 内容预览

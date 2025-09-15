@@ -3,8 +3,8 @@
 BM25 retriever — TEXT-ONLY, compact & generalized
 
 python -m src.rag.retriever.bm25_text `
-  --q "Tell me about Google’s expenses related to Research and Development?" `
-  --ticker GOOGL --form 10-K --year 2024 `
+  --q "What risks did Meta highlight about regulatory scrutiny in its 2023 10-K" `
+  --ticker META --form 10-K --year 2023 `
   --content-dir data/chunked --index-dir data/index 
 
 """
