@@ -5,11 +5,11 @@
 
   
 python -m src.rag.retriever.hybrid `
-  --query "What risks did Meta highlight about regulatory scrutiny in its 2023 10-K?" `
+  --query "What risks related to climate change did ExxonMobil highlight in its 2023 10-K?" `
   --index-dir data/index `
   --content-dir data/chunked `
   --model BAAI/bge-base-en-v1.5 `
-  --ticker META --form "10-K" --year 2023 `
+  --ticker XOM --form "10-K" --year 2023 `
   --topk 8 `
   --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
   --w-bm25 1.0 --w-dense 2.0 `

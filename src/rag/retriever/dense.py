@@ -4,12 +4,13 @@ Pure dense (bi-encoder) retriever with optional Cross-Encoder rerank.
 
 Usage:
 python -m src.rag.retriever.dense `
-  --q "What risks did Meta highlight about regulatory scrutiny in its 2023 10-K" `
-  --ticker META --form 10-K --year 2023 `
+  --q "What risks related to climate change did ExxonMobil highlight in its 2023 10-K?" `
+  --ticker XOM --form 10-K --year 2023 `
   --topk 8 --normalize `
   --content-dir data/chunked `
   --rerank --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `
   --fusion linear --alpha 0.75 --pretopk-mult 5 --batch-size 16 --max-length 512
+  
 """
 from __future__ import annotations
 import argparse, json
