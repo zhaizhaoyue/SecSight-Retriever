@@ -3,8 +3,8 @@
 BM25 retriever — TEXT-ONLY, compact & generalized
 
 python -m src.rag.retriever.bm25_text `
-  --q "What risks related to climate change did ExxonMobil highlight in its 2023 10-K?" `
-  --ticker XOM --form 10-K --year 2023 `
+  --q "What risks factor did JPMorgan highlight in its 2023 10-K?" `
+  --ticker JPM --form 10-K --year 2023 `
   --content-dir data/chunked --index-dir data/index 
 
 """
