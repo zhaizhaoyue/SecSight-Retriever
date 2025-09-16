@@ -9,15 +9,49 @@ from typing import List, Dict, Any
 # -------- 切块参数（只切 text） --------
 MAX_TOKENS_PER_CHUNK = 900     # ≈ 3.6k 字符
 MAX_CHARS_PER_CHUNK  = 3600
-SENT_SPLIT_RE = re.compile(r'(?<=[\.\?\!。！？])\s+')
+MIN_TOKENS_PER_CHUNK = 120
+OVERLAP_TOKENS = 80
+SENT_SPLIT_RE = re.compile(
+    r'(?<=[\.\?\!。！？])\s+'          # 句末标点
+    r'|(?<=;)\s+'                     # 分号
+    r'|(?<=:)\s+'                     # 冒号
+    r'|(?<=[—–])\s+'                  # 长短破折号
+)
+BULLET_LINE_RE = re.compile(
+    r'^\s*(?:[•\-–—]|'
+    r'\(\s*(?:[ivxlcdm]+|\d+|[a-zA-Z])\s*\)|'  # (i)/(1)/(a)
+    r'(?:\d+\.|[a-zA-Z]\.))\s+'
+)
+
 TABLE_LEADIN_RE = re.compile(
-    r"(the following table|the following|were as follows|are as follows|presented?\s+(?:below|as follows)|\(in (?:millions|thousands)\):)$",
+    r"(the following table|the following|were as follows|are as follows|presented?\s+(?:below|as follows)|\(in (?:millions|thousands)\):)\s*(?:\[\w+\])?\s*$",
     re.IGNORECASE
 )
+
 TABLE_MARK_RE = re.compile(r'^\s*\[(?:TABLE|Table)\b.*\]\s*$')
 
 def approx_tokens(s: str) -> int:
     return max(1, len(s)//4)
+
+def _tail_tokens(txt: str, n: int) -> str:
+    toks = txt.split()
+    if len(toks) <= n:
+        return txt
+    return " ".join(toks[-n:])
+
+def _split_units(p: str) -> List[str]:
+    """先按换行拆成行，行内若是列点/枚举，直接作为独立单元；否则再用 SENT_SPLIT_RE 做细分。"""
+    units: List[str] = []
+    for line in (p or "").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        if BULLET_LINE_RE.match(line):
+            units.append(line)
+        else:
+            parts = [s.strip() for s in SENT_SPLIT_RE.split(line) if s.strip()]
+            units.extend(parts if parts else [line])
+    return units
 
 def is_table_marker(line: str) -> bool:
     s = line.strip()
@@ -46,7 +80,7 @@ def group_by_heading(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     cur_h, cur_paras, cur_meta = None, [], {}
     def commit():
         nonlocal cur_h, cur_paras, cur_meta
-        if cur_h is not None and cur_paras:
+        if cur_paras:
             sections.append({"heading": cur_h, "paras": cur_paras[:], "meta_base": cur_meta.copy()})
         cur_h, cur_paras, cur_meta = None, [], {}
     for r in rows:
@@ -64,38 +98,101 @@ def group_by_heading(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     commit()
     return sections
 
-def emit_chunks_from_paragraphs(paras: List[str], push, max_tok=MAX_TOKENS_PER_CHUNK, max_chars=MAX_CHARS_PER_CHUNK):
-    buf: List[str] = []; btok = bchr = 0
-    def flush():
-        nonlocal buf, btok, bchr
-        if buf:
-            push("\n\n".join(buf))
-            buf.clear(); btok = 0; bchr = 0
+def emit_chunks_from_paragraphs(
+    paras: List[str],
+    include_heading: str | None,
+    push,
+    max_tok=MAX_TOKENS_PER_CHUNK,
+    max_chars=MAX_CHARS_PER_CHUNK,
+    min_tok=MIN_TOKENS_PER_CHUNK,
+    overlap_tok=OVERLAP_TOKENS
+):
+    """
+    改进点：
+    - 合并表格引导语到前块/后块
+    - 单元切分更细致（支持列点）
+    - 支持跨块重叠 overlap_tok
+    - 保证每块 >= min_tok（尽量）
+    - 在每个 content 开头注入一次 heading（极短，提升检索命中）
+    """
+    buf: List[str] = []       # 当前块的单元缓冲
+    btok = bchr = 0
+    last_overlap = ""         # 上一块的尾部重叠文本
+    pending_table_leadin = "" # 尚未并入的表格引导语
+
+    heading_prefix = (include_heading or "").strip()
+    heading_prefix = (heading_prefix + "\n\n") if heading_prefix else ""
+
+    def _cur_buf_text() -> str:
+        parts = []
+        if last_overlap:
+            parts.append(last_overlap)
+        if pending_table_leadin:
+            parts.append(pending_table_leadin)
+        parts.extend(buf)
+        return "\n\n".join(parts).strip()
+
+    def _flush(force=False):
+        nonlocal buf, btok, bchr, last_overlap, pending_table_leadin
+        if not buf and not pending_table_leadin:
+            return
+        text = _cur_buf_text()
+        if not text:
+            # 清空占位
+            buf.clear(); btok = bchr = 0; pending_table_leadin = ""
+            return
+        # 如果不是强制 flush，尽量满足最小 token
+        if not force and approx_tokens(text) < min_tok:
+            return
+        # 输出块：在内容最前面注入 heading_prefix
+        push(heading_prefix + text)
+        # 计算 overlap
+        last_overlap = _tail_tokens(text, overlap_tok)
+        # 重置缓冲
+        buf.clear(); btok = bchr = 0; pending_table_leadin = ""
+
     for p in paras:
+        # 表格标识与引导语：不单独出块，合并进当前/下一块
         if is_table_marker(p):
-            flush(); push(p.strip()); continue
-        ptok, pchr = approx_tokens(p), len(p)
-        if buf and (btok + ptok > max_tok or bchr + pchr > max_chars):
-            flush()
-        if ptok <= max_tok and pchr <= max_chars:
-            if (btok + ptok <= max_tok) and (bchr + pchr <= max_chars):
-                buf.append(p); btok += ptok; bchr += pchr
+            # 优先并入 pending，直到下一次 flush
+            pending_table_leadin = (pending_table_leadin + "\n\n" + p.strip()).strip() if pending_table_leadin else p.strip()
+            # 这里不立即 flush
+            continue
+
+        # 按单元切
+        units = _split_units(p)
+        for u in units:
+            utok, uchr = approx_tokens(u), len(u)
+            # 如果加入当前缓冲会超限 -> flush 一块
+            if buf and (btok + utok > max_tok or bchr + uchr > max_chars):
+                _flush(force=True)
+            # 超长单元：直接作为单独块（并尽量切几次）
+            if utok > max_tok or uchr > max_chars:
+                # 先把已有的 flush 掉
+                _flush(force=True)
+                # 对超长 u 再按句切一次，避免硬切
+                subparts = [s.strip() for s in SENT_SPLIT_RE.split(u) if s.strip()] or [u]
+                cur: List[str] = []; ctok = cchr = 0
+                for sp in subparts:
+                    stok, schr = approx_tokens(sp), len(sp)
+                    if cur and (ctok + stok > max_tok or cchr + schr > max_chars):
+                        buf = cur[:] ; btok = ctok ; bchr = cchr
+                        _flush(force=True)
+                        cur.clear(); ctok = cchr = 0
+                    cur.append(sp); ctok += stok; cchr += schr
+                if cur:
+                    buf = cur[:] ; btok = ctok ; bchr = cchr
+                    _flush(force=True)
             else:
-                flush(); buf.append(p); btok = ptok; bchr = pchr
-        else:
-            sents = [s.strip() for s in SENT_SPLIT_RE.split(p) if s.strip()]
-            cur: List[str] = []; ctok = cchr = 0
-            for s in sents:
-                stok, schr = approx_tokens(s), len(s)
-                if cur and (ctok + stok > max_tok or cchr + schr > max_chars):
-                    flush(); push(" ".join(cur)); cur=[]; ctok=cchr=0
-                if stok > max_tok or schr > max_chars:
-                    flush(); push(s)
-                else:
-                    cur.append(s); ctok += stok; cchr += schr
-            if cur:
-                flush(); push(" ".join(cur))
-    flush()
+                # 正常加入缓冲
+                buf.append(u); btok += utok; bchr += uchr
+                # 如果达到“足够大”，可以主动 flush（避免过大块）
+                if btok >= max_tok * 0.9 or bchr >= max_chars * 0.9:
+                    _flush(force=True)
+
+    # 最后一次 flush：放宽最小 token 限制
+    if buf or pending_table_leadin:
+        _flush(force=True)
 
 def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: int, overwrite: bool=False) -> dict:
     if out_path.exists() and not overwrite:
@@ -103,15 +200,47 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
     rows = load_rows(in_path)
     sections = group_by_heading(rows)
     chunks: List[Dict[str, Any]] = []
+    OTHER_YEARS_RE = re.compile(
+    r"\b20(1\d|2[0-5])\b\s+(?:"
+    r"(?:annual\s+report(?:\s+on\s+form)?\s+)?10(?:-|[\u2013\u2014])k"
+    r"|form\s+10(?:-|[\u2013\u2014])k"
+    r")",
+    re.I
+    )
     for sec in sections:
         heading, paras, meta_b = sec["heading"], sec["paras"], sec["meta_base"]
         local_blocks: List[str] = []
-        emit_chunks_from_paragraphs(paras, local_blocks.append, max_tokens, max_chars)
+        emit_chunks_from_paragraphs(
+            paras,
+            include_heading=heading,   # 新版函数会把 heading 注入到 content 顶部
+            push=local_blocks.append,
+            max_tok=max_tokens,
+            max_chars=max_chars
+        )
+
+        def _section_tag_from_text(t: str) -> str | None:
+            tl = (t or "").lower()
+            if "item 1a" in tl and "risk" in tl:
+                return "risk_factors"
+            if "forward-looking" in tl:
+                return "fwd_statements"
+            if "management’s discussion" in tl or "md&a" in tl or "management's discussion" in tl:
+                return "md&a"
+            return None
+
+
+        def _mentions_other_years(text: str) -> bool:
+            return bool(OTHER_YEARS_RE.search(text))
+
         for content in local_blocks:
             fy = meta_b.get("fy") or meta_b.get("year")
             fq = meta_b.get("fq") or "FY"
             accno = meta_b.get("accno") or "UNKNOWN"
             chunk_id = f"{accno}::text::chunk-{len(chunks)}"
+
+            # 如果 heading 没命中标签，就回退用 content 判定
+            sec_tag = _section_tag_from_text(heading) or _section_tag_from_text(content)
+
             meta = {
                 "ticker":     meta_b.get("ticker"),
                 "form":       meta_b.get("form"),
@@ -123,13 +252,17 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
                 "source_path":meta_b.get("source_path"),
                 "heading":    heading,
                 "chunk_id":   chunk_id,
+                "section_tag": sec_tag,
+                "mentions_other_years": _mentions_other_years(content),
             }
+
             chunks.append({
                 "id": chunk_id,
                 "title": title_from_meta(heading, {**meta_b, "fy": fy}),
-                "content": content,
+                "content": content,   # 不要再前置 heading，content 已经包含
                 "meta": meta
             })
+
     total = len(chunks)
     for i, ch in enumerate(chunks):
         ch["meta"]["chunk_index"] = i

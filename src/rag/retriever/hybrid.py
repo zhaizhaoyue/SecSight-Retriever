@@ -5,18 +5,16 @@
 
   
 python -m src.rag.retriever.hybrid `
-  --query "What risks factor did JPMorgan highlight in its 2023 10-K?" `
+  --query "Premiums earned Berkshire Hathaway 2023 Note 25 Segment Information" `
   --index-dir data/index `
   --content-dir data/chunked `
   --model BAAI/bge-base-en-v1.5 `
-  --ticker JPM --form "10-K" --year 2023 `
+  --ticker BRK-A --form "10-K" --year 2023 `
   --topk 8 `
   --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
   --w-bm25 1.0 --w-dense 2.0 `
-  --ce-weight 0.3 `
-  --show-chars 1000
-
-
+  --ce-weight 0.6 `
+  --show-chars 1200
 
 
 '''

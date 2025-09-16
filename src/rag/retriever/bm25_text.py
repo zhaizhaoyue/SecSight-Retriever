@@ -3,8 +3,8 @@
 BM25 retriever — TEXT-ONLY, compact & generalized
 
 python -m src.rag.retriever.bm25_text `
-  --q "What risks factor did JPMorgan highlight in its 2023 10-K?" `
-  --ticker JPM --form 10-K --year 2023 `
+  --q "What were Berkshire Hathaway’s Insurance and reinsurance premiums earned in its 2023" `
+  --ticker BRK-A --form 10-K --year 2024 `
   --content-dir data/chunked --index-dir data/index 
 
 """
