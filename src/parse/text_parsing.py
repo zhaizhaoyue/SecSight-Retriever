@@ -17,10 +17,11 @@ from datetime import datetime, timezone
 STD = Path("data/raw_reports/standard")
 
 SCHEMA_VERSION = "0.3.0"
-WRITE_FACTS_LIKE = True        # 是否输出 facts_like.jsonl
-CHUNK_SIZE_TOK = 350           # 文本切块大小（token 近似）
-CHUNK_OVERLAP_TOK = 60         # 块间重叠
-MAX_BLOCK_CHARS = 20000        # 单 block 过长时先做硬切，防止超长段落
+WRITE_FACTS_LIKE = False        # 是否输出 facts_like.jsonl
+TEXT_RETRIEVAL_ONLY = True
+CHUNK_SIZE_TOK = 900           # 文本切块大小（token 近似）
+CHUNK_OVERLAP_TOK = 120         # 块间重叠
+MAX_BLOCK_CHARS = 10_000_000        # 单 block 过长时先做硬切，防止超长段落
 LANG_DEFAULT = "en"
 PAGE_ID_RE   = re.compile(r'\b(?:p(?:age)?[-_]?)(\d{1,4})\b', re.I)   # p12/page-12/page12
 PAGE_TEXT_RE = re.compile(r'^\s*page\s+(\d{1,4})\s*$', re.I)  
@@ -374,7 +375,7 @@ def parse_text_from_html(path: Path):
         if len(txt) < 25 and RE_FRAGMENT.match(txt):
             continue
 
-        if not txt or is_noise_line(txt) or txt in seen_texts:
+        if not txt or ((not TEXT_RETRIEVAL_ONLY) and is_noise_line(txt)) or txt in seen_texts:
             continue
         seen_texts.add(txt)
 
@@ -412,11 +413,7 @@ def parse_text_from_html(path: Path):
             "page_anchor": anchor,
         }
 
-        if fact_hits >= FACT_TOKEN_MIN_COUNT:
-            rec = dict(rec_base)
-            rec["fact_token_hits"] = fact_hits
-            facts_like_items.append(rec)
-        else:
+        if (TEXT_RETRIEVAL_ONLY) or (fact_hits < FACT_TOKEN_MIN_COUNT):
             # 控制超长 block
             text_for_chunk = txt if len(txt) <= MAX_BLOCK_CHARS else txt[:MAX_BLOCK_CHARS]
             toks = count_tokens(text_for_chunk)
@@ -436,6 +433,11 @@ def parse_text_from_html(path: Path):
                 rec["text"] = text_for_chunk
                 rec["tokens"] = toks
                 text_items.append(rec)
+        else:
+            # 非文本模式下才分流到 facts_like
+            rec = dict(rec_base)
+            rec["fact_token_hits"] = fact_hits
+            facts_like_items.append(rec)
 
     return text_items, facts_like_items
 
@@ -479,7 +481,7 @@ def parse_one(std_file: Path, out_dir: Path):
         j = 0
         for l in raw.splitlines():
             l = normalize_spaces(l)
-            if not l or is_noise_line(l) or l in seen:
+            if not l or ((not TEXT_RETRIEVAL_ONLY) and is_noise_line(l)) or l in seen:
                 continue
             seen.add(l)
             j += 1

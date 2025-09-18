@@ -5,14 +5,14 @@
 
   
 python -m src.rag.retriever.hybrid `
-  --query "Premiums earned Berkshire Hathaway 2023 Note 25 Segment Information" `
+  --query "What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022?" `
   --index-dir data/index `
   --content-dir data/chunked `
   --model BAAI/bge-base-en-v1.5 `
-  --ticker BRK-A --form "10-K" --year 2023 `
-  --topk 8 `
+  --ticker KO --form "10-K" --year 2022 `
+  --topk 13 `
   --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
-  --w-bm25 1.0 --w-dense 2.0 `
+  --w-bm25 1.0 --w-dense 1.0 `
   --ce-weight 0.6 `
   --show-chars 1200
 

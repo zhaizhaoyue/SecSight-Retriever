@@ -30,6 +30,8 @@ DEFAULT_OUTPUT_DIR  = PROJECT_ROOT / "data" / "clean"
 DEFAULT_MAX_SENT_LEN  = 2000
 DEFAULT_HARD_WRAP_LEN = 2800
 DEFAULT_HEARTBEAT_EVERY = 1000
+# ---- 文本检索模式：放松去噪，避免过度丢失上下文，关闭额外的 RAG 轻滤
+TEXT_RETRIEVAL_ONLY = True
 
 SCALE_MAP = {
     "billion": 1e9, "bn": 1e9, "b": 1e9,
@@ -153,6 +155,13 @@ def is_probable_heading(s: str) -> bool:
     )
 
 def is_noise_line(s: str, min_chars: int) -> bool:
+    # 文本检索模式：尽量别丢文本，只过滤空串或纯标点
+    if TEXT_RETRIEVAL_ONLY:
+        if not s:
+            return True
+        if RE_SHORT_PUNC.match(s):
+            return True
+        return False
     if not s:
         return True
     if is_probable_heading(s):
@@ -349,20 +358,20 @@ def process_jsonl_line(
     if is_probable_heading(text_norm):
         heading_state["current_heading"] = text_norm
 
-    # 行级过滤更宽松
-    if is_noise_line(text_norm, min_chars=min_chars) and not is_probable_heading(text_norm):
-        return []
+    # 文本检索模式：尽量保留；否则遵循原有噪声判断
+    if (not TEXT_RETRIEVAL_ONLY) and is_noise_line(text_norm, min_chars=min_chars) and not is_probable_heading(text_norm):
+         return []
 
     for sent in split_sentences(text_norm):
-        if is_noise_line(sent, min_chars=min_chars) and not is_probable_heading(sent):
+        if (not TEXT_RETRIEVAL_ONLY) and is_noise_line(sent, min_chars=min_chars) and not is_probable_heading(sent):
             continue
 
         for seg in chunk_long_text(sent, max_len=max_sent_len, hard_wrap=hard_wrap_len):
-            if is_noise_line(seg, min_chars=min_chars) and not is_probable_heading(seg):
+            if (not TEXT_RETRIEVAL_ONLY) and is_noise_line(seg, min_chars=min_chars) and not is_probable_heading(seg):
                 continue
 
-            # >>> 新增：RAG 轻量过滤（丢纯数字/封面/目录/简短 Washington, D.C.）
-            if not _keep_for_rag(seg):
+            # 文本检索模式：不做额外轻量过滤，保留更多句子；非文本模式才启用
+            if (not TEXT_RETRIEVAL_ONLY) and (not _keep_for_rag(seg)):
                 continue
 
             pct_raw, pct_vals = parse_percent_tokens(seg)

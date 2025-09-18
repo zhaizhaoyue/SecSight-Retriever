@@ -4,8 +4,8 @@ Pure dense (bi-encoder) retriever with optional Cross-Encoder rerank.
 
 Usage:
 python -m src.rag.retriever.dense `
-  --q "What risks did JPMorgan highlight in its 2023 10-K?" `
-  --ticker JPM --form 10-K --year 2023 `
+  --q "What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022" `
+  --ticker KO --form 10-K --year 2022 `
   --topk 8 --normalize `
   --content-dir data/chunked `
   --rerank --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `

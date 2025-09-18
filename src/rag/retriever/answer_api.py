@@ -4,13 +4,13 @@ RAG Answerer — plugs HybridRetrieverRRF into an LLM (OpenAI-compatible or Open
 Usage example:
 
 python -m src.rag.retriever.answer_api `
-  --query "What risks did Tesla mention in its 2023 10-K?" `
-  --ticker TSLA --form 10-K --year 2023 `
+  --query "What risks related to antitrust regulation did Apple highlight in its 2021" `
+  --ticker AAPL --form 10-K --year 2021 `
   --index-dir data/index --content-dir data/chunked `
   --model BAAI/bge-base-en-v1.5 `
   --rerank-model cross-encoder/ms-marco-MiniLM-L-6-v2 `
-  --topk 8 --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
-  --w-bm25 1.0 --w-dense 2.0 --ce-weight 0.4 `
+  --topk 12 --bm25-topk 200 --dense-topk 200 --ce-candidates 256 `
+  --w-bm25 1.0 --w-dense 1.0 --ce-weight 0.65 `
   --llm-base-url https://api.deepseek.com/v1 `
   --llm-model deepseek-chat `
   --llm-api-key "sk-f6220301c405405a8ca5c65a06a75f7b" `
@@ -51,10 +51,12 @@ You are a precise analyst answering questions strictly from the provided evidenc
 - If at least one block is relevant, you MUST answer and cite it; only say "insufficient" if none is relevant.
 - Every factual claim needs ≥1 citation using the [RID] identifiers.
 - Output valid JSON only, no extra text:
+- you also need to give a confidence score according to the final anwser you created and the query you received.
 
 {
   "answer": "concise markdown with inline refs like [^1]",
   "citations": [{"rid":"<RID>","quote":"<short supporting quote>"}]
+  "confidence score": score you created
 }
 
 
@@ -80,8 +82,6 @@ If evidence mentions affordability/reliability, net-zero, or NDCs, include them 
 7) When amounts/dates appear, quote the exact figure and unit; prefer the most recent within the evidence.
 8) When multiple periods are present, state the period explicitly (YYYY-MM-DD or FY/FQ) and cite both sides.
 9) If evidence conflicts, state the discrepancy in one sentence and cite both sources.
-
-
 
 
 """

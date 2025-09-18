@@ -18,50 +18,60 @@ $logDir  = Join-Path (Get-Location) "logs"
 $logFile = Join-Path $logDir "answer_api_$ts.log"
 New-Item -ItemType Directory -Path $logDir -Force | Out-Null
 "=== Batch run of answer_api ($ts) ===" | Out-File -FilePath $logFile -Encoding utf8
-
-# 批量问题列表
 $tests = @(
-  @{ Query="What were Apple’s total revenues in its 2023 10-K?";   Ticker="AAPL"; Year=2024 }
-  @{ Query="What risks related to climate change did ExxonMobil highlight in its 2023 10-K?"; Ticker="XOM"; Year=2023 }
-  @{ Query="What risks related to regulatory scrutiny did Meta highlight in its 2023 10-K?"; Ticker="META"; Year=2023 }
-  @{ Query="Which segment generated the most revenue for Microsoft in 2024 10-K?"; Ticker="MSFT"; Year=2024 }
-  @{ Query="What were Amazon’s total revenues in its 2023 10-K?";  Ticker="AMZN"; Year=2024 }
-  @{ Query="What risks did Tesla mention in its 2023 10-K?";       Ticker="TSLA"; Year=2023 }
-  @{ Query="What were NVIDIA’s R&D expenses in its 2023 10-K?";   Ticker="NVDA"; Year=2023 }
-  @{ Query="What were Alphabet’s advertising revenues in its 2023 10-K?"; Ticker="GOOGL"; Year=2023 }
-  @{ Query="What litigation risks did Johnson & Johnson highlight in its 2023 10-K?"; Ticker="JNJ"; Year=2023 }
-  @{ Query="What risks did JPMorgan highlight in its 2023 10-K?"; Ticker="JPM"; Year=2023 }
-  @{ Query="What were Procter & Gamble’s net sales in its 2023 10-K?"; Ticker="PG"; Year=2023 }
-  @{ Query="What were Pfizer’s total revenues in its 2023 10-K?"; Ticker="PFE"; Year=2024 }
-  @{ Query="What risks related to competition did Visa highlight in its 2023 10-K?"; Ticker="V"; Year=2023 }
-  @{ Query="What were Walmart’s revenues in its 2023 10-K?";      Ticker="WMT"; Year=2023 }
-  @{ Query="What risks related to healthcare regulation did UnitedHealth mention in its 2023 10-K?"; Ticker="UNH"; Year=2023 }
-  @{ Query="What were Berkshire Hathaway’s insurance revenues in its 2023 10-K?"; Ticker="BRK-A"; Year=2023 }
-  @{ Query="What were Coca-Cola’s net operating revenues in its 2023 10-K?"; Ticker="KO"; Year=2023 }
-  @{ Query="What risks related to energy markets did Chevron highlight in its 2023 10-K?"; Ticker="CVX"; Year=2023 }
-  @{ Query="What were PepsiCo’s revenues in its 2023 10-K?";      Ticker="PEP"; Year=2023 }
-  @{ Query="What risks related to consumer demand did Mastercard highlight in its 2023 10-K?"; Ticker="MA"; Year=2023 }
-  @{ Query="What were Intel’s R&D expenses in its 2023 10-K?"; Ticker="INTC"; Year=2023 }
-  @{ Query="What risks related to supply chain did Apple highlight in its 2023 10-K?"; Ticker="AAPL"; Year=2023 }
-  @{ Query="What were Cisco’s total revenues in its 2023 10-K?"; Ticker="CSCO"; Year=2023 }
-  @{ Query="What risks related to cybersecurity did IBM mention in its 2023 10-K?"; Ticker="IBM"; Year=2023 }
-  @{ Query="What were Netflix’s content expenses in its 2023 10-K?"; Ticker="NFLX"; Year=2023 }
-  @{ Query="What risks related to regulation did PayPal mention in its 2023 10-K?"; Ticker="PYPL"; Year=2023 }
-  @{ Query="What were Oracle’s cloud revenues in its 2023 10-K?"; Ticker="ORCL"; Year=2023 }
-  @{ Query="What risks related to competition did Adobe highlight in its 2023 10-K?"; Ticker="ADBE"; Year=2023 }
-  @{ Query="What were Qualcomm’s licensing revenues in its 2023 10-K?"; Ticker="QCOM"; Year=2023 }
-  @{ Query="What risks related to labor shortages did Starbucks highlight in its 2023 10-K?"; Ticker="SBUX"; Year=2023 }
-  @{ Query="What were Boeing’s total revenues in its 2023 10-K?"; Ticker="BA"; Year=2023 }
-  @{ Query="What risks related to raw material costs did General Motors highlight in its 2023 10-K?"; Ticker="GM"; Year=2023 }
-  @{ Query="What were Ford’s automotive revenues in its 2023 10-K?"; Ticker="F"; Year=2023 }
-  @{ Query="What risks related to intellectual property did Moderna highlight in its 2023 10-K?"; Ticker="MRNA"; Year=2023 }
-  @{ Query="What were Eli Lilly’s total revenues in its 2023 10-K?"; Ticker="LLY"; Year=2023 }
-  @{ Query="What risks related to data privacy did Salesforce highlight in its 2023 10-K?"; Ticker="CRM"; Year=2023 }
-  @{ Query="What were American Express’s total revenues in its 2023 10-K?"; Ticker="AXP"; Year=2023 }
-  @{ Query="What risks related to geopolitical tensions did Caterpillar mention in its 2023 10-K?"; Ticker="CAT"; Year=2023 }
-  @{ Query="What were Goldman Sachs’s total revenues in its 2023 10-K?"; Ticker="GS"; Year=2023 }
-  @{ Query="What risks related to interest rates did Bank of America highlight in its 2023 10-K?"; Ticker="BAC"; Year=2023 }
+@{ Query="What risks did Apple highlight related to supply chain disruptions in 2021?"; Ticker="AAPL"; Year=2021 }
+@{ Query="How did Microsoft describe the competitive landscape for Azure and cloud services in 2023?"; Ticker="MSFT"; Year=2023 }
+@{ Query="What strategic priorities did Alphabet outline for its advertising business in 2022?"; Ticker="GOOGL"; Year=2022 }
+@{ Query="What challenges did Amazon report in managing international expansion in 2023?"; Ticker="AMZN"; Year=2023 }
+@{ Query="What risks did NVIDIA identify regarding data center supply chain or customer concentration in 2024?"; Ticker="NVDA"; Year=2024 }
+@{ Query="How did Meta describe trends in user engagement and monetization in 2023?"; Ticker="META"; Year=2023 }
+@{ Query="What regulatory or market risks did Berkshire Hathaway discuss in 2021?"; Ticker="BRK-A"; Year=2021 }
+@{ Query="What risks did Tesla highlight regarding scaling vehicle production globally in 2022?"; Ticker="TSLA"; Year=2022 }
+@{ Query="What economic or credit risks did JPMorgan emphasize in its 2023 10-K?"; Ticker="JPM"; Year=2023 }
+@{ Query="How did Johnson & Johnson describe its pharmaceutical pipeline strategy in 2024?"; Ticker="JNJ"; Year=2024 }
+@{ Query="What risks did Visa identify related to global payment volumes and consumer demand in 2020?"; Ticker="V"; Year=2020 }
+@{ Query="What competitive or regulatory risks did Mastercard emphasize in 2022?"; Ticker="MA"; Year=2022 }
+@{ Query="How did Procter & Gamble describe its pricing and product innovation strategies in 2023?"; Ticker="PG"; Year=2023 }
+@{ Query="What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022?"; Ticker="KO"; Year=2022 }
+@{ Query="How did PepsiCo describe consumer trends influencing its product portfolio in 2021?"; Ticker="PEP"; Year=2021 }
+@{ Query="What climate change or environmental risks did ExxonMobil highlight in 2020?"; Ticker="XOM"; Year=2020 }
+@{ Query="How did Chevron describe geopolitical or regulatory risks affecting its operations in 2023?"; Ticker="CVX"; Year=2023 }
+@{ Query="What risks did Walmart highlight related to labor, wages, or workforce management in 2022?"; Ticker="WMT"; Year=2022 }
+@{ Query="What legal or regulatory risks did Pfizer outline regarding its COVID-19 products in 2021?"; Ticker="PFE"; Year=2021 }
+@{ Query="What risks did UnitedHealth describe related to healthcare regulation in 2024?"; Ticker="UNH"; Year=2024 }
+@{ Query="How did Apple describe its R&D priorities and innovation strategy in 2021?"; Ticker="AAPL"; Year=2021 }
+@{ Query="What growth drivers did Microsoft highlight for server products and cloud services in 2023?"; Ticker="MSFT"; Year=2023 }
+@{ Query="What risks did Alphabet outline regarding rising traffic acquisition costs in 2022?"; Ticker="GOOGL"; Year=2022 }
+@{ Query="What challenges did Amazon discuss regarding profitability in its international operations in 2023?"; Ticker="AMZN"; Year=2023 }
+@{ Query="What opportunities and risks did NVIDIA discuss for gaming and visualization markets in 2024?"; Ticker="NVDA"; Year=2024 }
+@{ Query="How did Meta describe its capital expenditure strategy and infrastructure priorities in 2023?"; Ticker="META"; Year=2023 }
+@{ Query="What risks did Berkshire Hathaway highlight related to its insurance operations in 2021?"; Ticker="BRK-A"; Year=2021 }
+@{ Query="What challenges did Tesla describe in expanding its energy generation and storage business in 2022?"; Ticker="TSLA"; Year=2022 }
+@{ Query="How did JPMorgan describe trends in investment banking and asset management in 2023?"; Ticker="JPM"; Year=2023 }
+@{ Query="What strategic priorities did Johnson & Johnson outline for its medical devices segment in 2024?"; Ticker="JNJ"; Year=2024 }
+@{ Query="What risks did Visa highlight regarding client incentives and competitive dynamics in 2020?"; Ticker="V"; Year=2020 }
+@{ Query="How did Mastercard describe its approach to rebates and incentives in 2022?"; Ticker="MA"; Year=2022 }
+@{ Query="What risks and opportunities did Procter & Gamble identify regarding commodity costs in 2023?"; Ticker="PG"; Year=2023 }
+@{ Query="How did Coca-Cola describe its pricing strategy and response to market conditions in 2022?"; Ticker="KO"; Year=2022 }
+@{ Query="What risks did PepsiCo identify related to supply chain disruptions in 2021?"; Ticker="PEP"; Year=2021 }
+@{ Query="How did ExxonMobil describe operational challenges in its downstream business in 2020?"; Ticker="XOM"; Year=2020 }
+@{ Query="What were Chevron's stated capital allocation priorities in 2023?"; Ticker="CVX"; Year=2023 }
+@{ Query="What supply chain or logistics risks did Walmart identify in 2022?"; Ticker="WMT"; Year=2022 }
+@{ Query="What risks did Pfizer mention regarding future drug development and regulatory approvals in 2021?"; Ticker="PFE"; Year=2021 }
+@{ Query="How did UnitedHealth describe growth opportunities in its Optum segment in 2024?"; Ticker="UNH"; Year=2024 }
+@{ Query="How did Apple describe trends in its services ecosystem in 2021?"; Ticker="AAPL"; Year=2021 }
+@{ Query="What did Microsoft emphasize about its commercial cloud strategy in 2023?"; Ticker="MSFT"; Year=2023 }
+@{ Query="What risks did Alphabet mention regarding cloud profitability and competition in 2022?"; Ticker="GOOGL"; Year=2022 }
+@{ Query="How did Amazon describe the role of advertising in its overall strategy in 2023?"; Ticker="AMZN"; Year=2023 }
+@{ Query="What opportunities did NVIDIA highlight for its automotive business in 2024?"; Ticker="NVDA"; Year=2024 }
+@{ Query="What risks and opportunities did Meta discuss regarding Reality Labs in 2023?"; Ticker="META"; Year=2023 }
+@{ Query="What risks did Berkshire Hathaway mention related to its railroad and energy operations in 2021?"; Ticker="BRK-A"; Year=2021 }
+@{ Query="What challenges did Tesla outline in scaling solar and storage deployments in 2022?"; Ticker="TSLA"; Year=2022 }
+@{ Query="What risks did JPMorgan highlight related to credit quality and provisions in 2023?"; Ticker="JPM"; Year=2023 }
+@{ Query="What financial and strategic impacts did Johnson & Johnson discuss regarding its consumer health spin-off in 2024?"; Ticker="JNJ"; Year=2024 }
 )
+
+
 
 # 公共参数
 $common = @(
