@@ -1,4 +1,6 @@
 
+# AIE Framework Configuration File (HuggingFace Local Models)
+
 # Model Configuration
 models:
   llm:
@@ -20,27 +22,27 @@ dataset:
     val_split: 0.1
     test_split: 0.1
 
-# AIE Framework Module Configuration
+# AIE Framework Module Configuration (optimized for local models)
 aie_framework:
   segmentation:
-    max_segment_length: 1000
+    max_segment_length: 500  # Smaller segments for local models
     overlap_ratio: 0.1
-    split_method: "semantic"
+    split_method: "fixed"  # Faster method
     
   retrieval:
-    top_k: 5  # Number of top segments to retrieve
-    similarity_threshold: 0.5  # Similarity threshold
-    retrieval_method: "dense"  # Options: dense, sparse, hybrid
+    top_k: 3  # Fewer segments to reduce processing
+    similarity_threshold: 0.3
+    retrieval_method: "dense"
     
   summarization:
-    strategy: "refine"  # Options: refine, map_reduce, stuff
-    max_summary_length: 500  # Maximum summary length
-    chunk_size: 2000  # Chunk size for Refine strategy
+    strategy: "stuff"  # Simpler strategy for local models
+    max_summary_length: 300
+    chunk_size: 1000
     
   extraction:
     prompt_template: "templates/extraction_prompt.txt"
-    output_format: "json"  # Options: json, structured
-    max_retries: 3  # Maximum retries when extraction fails
+    output_format: "json"
+    max_retries: 2
 
 # Evaluation Configuration
 evaluation:
@@ -49,7 +51,6 @@ evaluation:
     - "f1_score"
     - "precision"
     - "recall"
-    - "rouge"
   
   output_dir: "results/"
   save_predictions: true
@@ -57,8 +58,8 @@ evaluation:
 
 # Experiment Configuration
 experiments:
-  batch_size: 8
-  num_workers: 4
+  batch_size: 2  # Smaller batch for local processing
+  num_workers: 2
   seed: 42
   log_level: "INFO"
   save_checkpoints: true

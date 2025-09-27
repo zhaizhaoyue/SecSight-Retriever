@@ -1,3 +1,4 @@
+# AIE Framework Configuration File (DeepSeek)
 
 # Model Configuration
 models:
@@ -9,8 +10,8 @@ models:
     temperature: 0.1
     
   embedding:
-    model_name: "sentence-transformers/all-MiniLM-L6-v2"
-    device: "cuda"
+    model_name: "sentence-transformers/all-mpnet-base-v2"
+    device: "cuda"  # Or "cuda" if GPU available
 
 # Dataset Configuration
 dataset:
@@ -23,14 +24,17 @@ dataset:
 # AIE Framework Module Configuration
 aie_framework:
   segmentation:
-    max_segment_length: 1000
-    overlap_ratio: 0.1
-    split_method: "semantic"
+    max_segment_length: 1000  # Maximum segment length (character count)
+    overlap_ratio: 0.1  # Segment overlap ratio
+    split_method: "semantic"  # Options: semantic, fixed, adaptive
     
   retrieval:
     top_k: 5  # Number of top segments to retrieve
-    similarity_threshold: 0.5  # Similarity threshold
-    retrieval_method: "dense"  # Options: dense, sparse, hybrid
+    similarity_threshold: 0.01  # Similarity threshold (lowered for BM25)
+    retrieval_method: "sparse"  # Options: dense, sparse, hybrid
+    algorithm: "bm25"  # For sparse: bm25 or tfidf
+    k1: 1.2  # BM25 parameter
+    b: 0.75  # BM25 parameter
     
   summarization:
     strategy: "refine"  # Options: refine, map_reduce, stuff
