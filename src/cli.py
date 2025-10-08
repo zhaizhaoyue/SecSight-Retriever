@@ -13,29 +13,30 @@ from typing import Iterable, List, Sequence
 '''
 PLEASE RUN THE FOLLOWING COMMAND TO RUN THE PIPELINE:(DON'T FORGET INPUT YOUR EMAIL)
 
-python -m src.cli run ` 
---stages download,postprocess,parse,clean,index,chunk,embed ` 
---download-email YOUR EMAIL ` 
---download-outdir data/raw_reports ` 
---download-companies-csv data/companies.csv ` 
---download-limit-10k 1 ` 
---download-limit-10q 1 ` 
---download-sleep 0.5 ` 
---postprocess-base data/raw_reports/sec-edgar-filings ` 
---postprocess-out data/raw_reports/standard ` 
---parse-input data/raw_reports/standard ` 
---parse-output data/processed ` 
---clean-input data/processed ` 
---clean-output data/clean ` 
---index-input data/clean ` 
---index-output data/silver ` 
---chunk-input data/silver ` 
---chunk-output data/chunked ` 
---chunk-workers 4 ` 
---embed-input data/chunked ` 
---embed-output data/index ` 
---embed-model BAAI/bge-base-en-v1.5 ` 
---embed-use-title 
+python -m src.cli run `
+--stages download,postprocess,parse,clean,index,chunk,embed `
+--download-email "zhaizhaoyue520@gmai.com" `
+--download-outdir "data/raw_reports" `
+--download-companies-csv "data/companies.csv" `
+--download-limit-10k 4 `
+--download-limit-10q 4 `
+--download-sleep 0.5 `
+--postprocess-base "data/raw_reports/sec-edgar-filings" `
+--postprocess-out "data/raw_reports/standard" `
+--parse-input "data/raw_reports/standard" `
+--parse-output "data/processed" `
+--clean-input "data/processed" `
+--clean-output "data/clean" `
+--index-input "data/clean" `
+--index-output "data/silver" `
+--chunk-input "data/silver" `
+--chunk-output "data/chunked" `
+--chunk-workers 4 `
+--embed-input "data/chunked" `
+--embed-output "data/index" `
+--embed-model "BAAI/bge-base-en-v1.5" `
+--embed-use-title
+
 
 
 DO THE FOLLOWING COMMAND TO QUERY THE INDEX:
@@ -47,6 +48,21 @@ python -m src.cli query `
     --ticker AAPL `
     --form 10-K `
     --year 2024 `
+    --bm25-topk 400 `
+    --dense-topk 400 `
+    --ce-candidates 256 `
+    --ce-weight 0.7 `
+    --dense-device cuda `
+    --rerank-device cuda `
+    --llm-base-url https://api.deepseek.com/v1 `
+    --llm-model deepseek-chat `
+    --llm-api-key "sk-b4f98bd0609246c2ba28f0eb0ad549ea"
+
+
+python -m src.cli query `
+    --query "What was Apple's revenue in FY2024?" `
+    --index-dir data/index `
+    --chunk-dir data/chunked `
     --bm25-topk 400 `
     --dense-topk 400 `
     --ce-candidates 256 `
@@ -423,23 +439,25 @@ def command_query(args: argparse.Namespace) -> None:
         print("No retrieval hits.")
         return
 
-    print()
-    print(f"Top {len(result.records)} hits:")
-    for idx, rec in enumerate(result.records, 1):
-        rid = rec.get("id", "<unknown>")
-        score = rec.get("score") or rec.get("rrf_score") or rec.get("dense_score")
-        score_str = f" score={score:.4f}" if isinstance(score, (int, float)) else ""
+    if result.records and args.topk > 0:
         print()
-        print(f"{idx}. {rid}{score_str}")
-        snippet = rec.get("snippet") or rec.get("text") or rec.get("content") or ""
-        if snippet and args.snippet_chars > 0:
-            pretty = textwrap.shorten(" ".join(snippet.split()), width=args.snippet_chars, placeholder="...")
-            print(f"   Snippet: {pretty}")
-        meta = rec.get("meta") or {}
-        if meta:
-            meta_line = ", ".join(f"{k}={v}" for k, v in meta.items() if v is not None)
-            if meta_line:
-                print(f"   Meta: {meta_line}")
+        # display_records = result.records[:args.topk]
+        # print(f"Top {len(display_records)} hits:")
+        # for idx, rec in enumerate(display_records, 1):
+        #     rid = rec.get("id", "<unknown>")
+        #     score = rec.get("score") or rec.get("rrf_score") or rec.get("dense_score")
+        #     score_str = f" score={score:.4f}" if isinstance(score, (int, float)) else ""
+        #     print()
+        #     print(f"{idx}. {rid}{score_str}")
+        #     snippet = rec.get("snippet") or rec.get("text") or rec.get("content") or ""
+        #     if snippet and args.snippet_chars > 0:
+        #         pretty = textwrap.shorten(" ".join(snippet.split()), width=args.snippet_chars, placeholder="...")
+        #         print(f"   Snippet: {pretty}")
+        #     meta = rec.get("meta") or {}
+        #     if meta:
+        #         meta_line = ", ".join(f"{k}={v}" for k, v in meta.items() if v is not None)
+        #         if meta_line:
+        #             print(f"   Meta: {meta_line}")
 
 # ---------------------------------------------------------------------------
 # Runner
