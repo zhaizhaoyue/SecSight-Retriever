@@ -24,14 +24,14 @@ TICKER_CIK_HARDCODE = {
 }
 
 AGENT_CIKS = {
-    "0000950170",  # 常见代理
-    "0001564590",  # 常见代理（你日志里命中的）
-    "0001193125",  # 常见代理
-    "0001047469",  # 常见代理
+    "0000950170",  # common filing agent
+    "0001564590",  # common filing agent seen in logs
+    "0001193125",  # common filing agent
+    "0001047469",  # common filing agent
 }
 
 # ------------------------------
-# 工具函数：网络会话与请求
+# Helper utilities for HTTP sessions and requests
 # ------------------------------
 def _requests_session():
     s = requests.Session()
@@ -77,7 +77,7 @@ def _download_file(url: str, dst: Path, headers: dict, session=None) -> bool:
     return False
 
 # ------------------------------
-# 读元数据 / 目录解析
+# Metadata helpers and directory parsing
 # ------------------------------
 def _read_metadata(folder: Path) -> dict:
     mfile = folder / "metadata.json"
@@ -88,7 +88,7 @@ def _read_metadata(folder: Path) -> dict:
             return {}
     return {}
 
-# 一次性缓存 SEC 的 ticker→CIK 映射
+# Cache SEC ticker-to-CIK mapping once
 _SEC_TICKERS_CACHE = None
 
 def _resolve_cik_from_ticker(ticker: str, company_name: str, email: str) -> Optional[str]:
@@ -102,7 +102,7 @@ def _resolve_cik_from_ticker(ticker: str, company_name: str, email: str) -> Opti
     if key in TICKER_CIK_HARDCODE:
         return TICKER_CIK_HARDCODE[key]
 
-    # 先查硬映射
+    # Check hard-coded mapping first
     t_upper = ticker.upper()
     if t_upper in TICKER_CIK_HARDCODE:
         return TICKER_CIK_HARDCODE[t_upper]
@@ -117,7 +117,7 @@ def _resolve_cik_from_ticker(ticker: str, company_name: str, email: str) -> Opti
                 "User-Agent": USER_AGENT_TMPL.format(company=company_name, email=email),
                 "Accept": "application/json,*/*"
             }
-            # 先尝试官方 company_tickers.json
+            # Try official company_tickers.json first
             url = "https://www.sec.gov/files/company_tickers.json"
             j = _fetch_json(url, headers=headers, session=sess)
             if j:
@@ -128,7 +128,7 @@ def _resolve_cik_from_ticker(ticker: str, company_name: str, email: str) -> Opti
             else:
                 _SEC_TICKERS_CACHE = {}
 
-        # 查两次键：原样 & 规范化
+        # Index with both raw and normalized keys
         for k in (t_upper, t_norm):
             v = _SEC_TICKERS_CACHE.get(k)
             if v:
@@ -139,8 +139,8 @@ def _resolve_cik_from_ticker(ticker: str, company_name: str, email: str) -> Opti
 
 
 def _extract_issuer_cik(meta: dict, folder: Path, *, ticker: Optional[str], company_name: str, email: str) -> Optional[str]:
-    """尽量拿到发行人 CIK，拒绝常见代理 CIK；必要时通过 ticker 反查。"""
-    # 1) metadata.json 常见位置
+    """Resolve issuer CIKs while excluding common filing agents; fall back to ticker lookup when required."""
+    # 1) metadata.json when present
     candidate_paths = [
         ("companyData","cik"),
         ("companyInfo","cik"),
@@ -162,7 +162,7 @@ def _extract_issuer_cik(meta: dict, folder: Path, *, ticker: Optional[str], comp
         except Exception:
             pass
 
-    # 2) filing-details.html 正文里提取
+    # 2) Parse filing-details.html for metadata
     try:
         htm = folder / "filing-details.html"
         if htm.exists():
@@ -175,13 +175,13 @@ def _extract_issuer_cik(meta: dict, folder: Path, *, ticker: Optional[str], comp
     except Exception:
         pass
 
-    # 3) 通过 ticker 反查（最稳）
+    # 3) Reverse lookup via ticker (most reliable)
     if ticker:
         v = _resolve_cik_from_ticker(ticker, company_name, email)
         if v and v not in AGENT_CIKS:
             return v
 
-    # 4) 最后兜底：从 accession 前10位（若命中黑名单则忽略）
+    # 4) Fallback: use accession prefix unless blacklisted
     accno = str(meta.get("accessionNumber") or meta.get("accession") or folder.name).strip()
     m = re.match(r"^(\d{10})-\d{2}-\d{6}$", accno)
     if m:
@@ -194,7 +194,7 @@ def _extract_issuer_cik(meta: dict, folder: Path, *, ticker: Optional[str], comp
 
 
 def _cik_from_accno(accno: str) -> Optional[str]:
-    # "0000320193-24-000010" → "0000320193"
+    # "0000320193-24-000010" -> "0000320193"
     m = re.match(r"^(\d{10})-\d{2}-\d{6}$", accno)
     return m.group(1) if m else None
 
@@ -220,7 +220,7 @@ def _list_dir_html(url: str, headers: dict, session=None):
 def _looks_like_xbrl(name: str) -> bool:
     n = name.lower()
     if n.endswith((".xml", ".xsd")):
-        # 基本全部收；加关键词优先
+        # Prefer keeping everything and prioritize keyword matches
         return True
     return False
 
@@ -232,12 +232,10 @@ def _harvest_filing_dirs(root: Path, ticker: str, form: str) -> list[Path]:
     return [p for p in base.glob("*") if p.is_dir()]
 
 # ------------------------------
-# XBRL 下载（index.json → 目录HTML 递归）
+# XBRL downloads with index.json and HTML fallback
 # ------------------------------
 def _download_xbrl_for_folder(folder: Path, company_name: str, email: str, sleep_sec: float = 0.4, ticker: Optional[str] = None) -> int:
-    """
-    针对单个 filing 目录下载 XBRL：先 index.json，失败再目录 HTML 递归抓取。
-    """
+    """Download XBRL assets for a filing directory, using index.json first and falling back to crawling HTML listings."""
     meta  = _read_metadata(folder)
     accno = (meta.get("accessionNumber") or meta.get("accession") or folder.name).strip()
 
@@ -285,7 +283,7 @@ def _download_xbrl_for_folder(folder: Path, company_name: str, email: str, sleep
     if idx and "directory" in idx and "item" in idx["directory"]:
         walk_json(idx["directory"]["item"])
     else:
-        print("[xbrl] index.json unavailable → fallback to HTML listing")
+        print("[xbrl] index.json unavailable -> fallback to HTML listing")
         def walk_html(dir_url: str, rel=""):
             for href, is_dir in _list_dir_html(dir_url, headers=headers, session=session):
                 if is_dir:
@@ -294,7 +292,7 @@ def _download_xbrl_for_folder(folder: Path, company_name: str, email: str, sleep
                     targets.append((rel + href, False))
         walk_html(base_root, "")
 
-    # 下载 .xml/.xsd
+    # Download .xml/.xsd assets
     count = 0
     for rel, is_dir in targets:
         if is_dir:
@@ -312,7 +310,7 @@ def _download_xbrl_for_folder(folder: Path, company_name: str, email: str, sleep
 
 
 # ------------------------------
-# 其它
+# Misc helpers
 # ------------------------------
 def year_bounds(y: int):
     return f"{y}-01-01", f"{y+1}-01-01"
@@ -324,7 +322,7 @@ def _supports_builtin_xbrl(dl: Downloader) -> bool:
         return False
 
 # ------------------------------
-# 主流程
+# Main workflow
 # ------------------------------
 def run(email: str,
         outdir: str,
@@ -332,8 +330,12 @@ def run(email: str,
         limit_10k: int | None = None,
         limit_10q: int | None = None,
         xbrl: bool = True,
-        sleep: float = 0.4):
+        sleep: float = 0.4,
+        companies_csv: Path | str = COMPANIES_CSV):
     out = Path(outdir); out.mkdir(parents=True, exist_ok=True)
+    companies_path = Path(companies_csv)
+    if not companies_path.exists():
+        raise FileNotFoundError(f"companies csv not found: {companies_path}")
     print("[info] CWD:", Path.cwd())
     print("[info] Python:", sys.executable, platform.python_version())
     print("[info] download root:", out.resolve())
@@ -353,7 +355,7 @@ def run(email: str,
     ts = dt.datetime.now().isoformat(timespec="seconds")
 
     supports_builtin_xbrl = _supports_builtin_xbrl(dl)
-    with open(COMPANIES_CSV, encoding="utf-8") as f:
+    with open(companies_path, encoding="utf-8") as f:
         for row in csv.DictReader(f):
             if (row.get("source","").upper() != "EDGAR") or (row.get("market","").upper() != "US"):
                 continue
@@ -363,7 +365,7 @@ def run(email: str,
 
             for form in forms:
                 try:
-                    # ---- 限量模式 ----
+                    # ---- Limited mode ----
                     if form == "10-K" and limit_10k:
                         print(f"[downloading] {ticker} {form} last {limit_10k} ...")
                         if xbrl and supports_builtin_xbrl:
@@ -372,7 +374,7 @@ def run(email: str,
                             dl.get("10-K", ticker, limit=limit_10k, download_details=True)
                         okw.writerow([ticker, form, f"limit={limit_10k}", "", ts])
 
-                        # 二次确认 + 回退
+                        # Second-stage validation plus fallback
                         for folder in _harvest_filing_dirs(out, ticker, "10-K"):
                             xmln = _count_xml(folder)
                             if xbrl and xmln == 0:
@@ -397,7 +399,7 @@ def run(email: str,
                             print(f"[ok] wrote -> {folder} (xml/xsd={xmln})")
                         continue
 
-                    # ---- 年份范围模式 ----
+                    # ---- Year-range mode ----
                     for y in years:
                         after, before = year_bounds(y)
                         print(f"[downloading] {ticker} {form} in {y} ...")
@@ -420,25 +422,25 @@ def run(email: str,
                     print(f"[fail] {ticker} {form}: {e}")
 
     ok_log.close(); fail_log.close()
-    print("✅ download_from_csv: 完成（详见 data/qa/）")
+    print("[ok] download_from_csv: completed (see data/qa/)")
 
 # ------------------------------
 # CLI
 # ------------------------------
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--email", default="zhaizhaoyue520@gmail.com", help="联系邮箱（用于User-Agent）")
-    ap.add_argument("--outdir", default=str(DEFAULT_OUTDIR), help="下载根目录")
-    ap.add_argument("--company-name", default="FinanceLLMAssistant", help="User-Agent公司名")
-    ap.add_argument("--limit-10k", type=int, default=None, help="10-K 最近N份（可选）")
-    ap.add_argument("--limit-10q", type=int, default=None, help="10-Q 最近N份（可选）")
+    ap.add_argument("--email", default="zhaizhaoyue520@gmail.com", help="Contact email used in the User-Agent header")
+    ap.add_argument("--outdir", default=str(DEFAULT_OUTDIR), help="Download root directory")
+    ap.add_argument("--company-name", default="FinanceLLMAssistant", help="Company name to embed in User-Agent")
+    ap.add_argument("--limit-10k", type=int, default=None, help="Download the last N 10-K filings")
+    ap.add_argument("--limit-10q", type=int, default=None, help="Download the last N 10-Q filings")
 
     g = ap.add_mutually_exclusive_group()
-    g.add_argument("--xbrl", dest="xbrl", action="store_true", help="开启 XBRL 下载（默认开启）")
-    g.add_argument("--no-xbrl", dest="xbrl", action="store_false", help="关闭 XBRL 下载")
+    g.add_argument("--xbrl", dest="xbrl", action="store_true", help="Enable XBRL download")
+    g.add_argument("--no-xbrl", dest="xbrl", action="store_false", help="Disable XBRL download")
     ap.set_defaults(xbrl=True)
 
-    ap.add_argument("--sleep", type=float, default=0.4, help="下载 XBRL 的最小间隔秒数（默认0.4s）")
+    ap.add_argument("--sleep", type=float, default=0.4, help="Minimum sleep between XBRL downloads (seconds)")
     args = ap.parse_args()
 
     run(

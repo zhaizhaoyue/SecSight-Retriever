@@ -1,16 +1,13 @@
-#111
-
 from pathlib import Path
 import shutil, re, json
 from bs4 import BeautifulSoup
 
-BASE = Path("data/raw_reports/sec-edgar-filings")
-OUT  = Path("data/raw_reports/standard")
-OUT.mkdir(parents=True, exist_ok=True)
+DEFAULT_BASE_DIR = Path("data/raw_reports/sec-edgar-filings")
+DEFAULT_OUTPUT_DIR = Path("data/raw_reports/standard")
 
 
 def pick_main_html(folder: Path):
-    """选择 HTML 主文件"""
+    """Pick the primary HTML file from a filing directory."""
     htmls = list(folder.glob("*.htm")) + list(folder.glob("*.html"))
     htmls = [p for p in htmls if "filing-details" not in p.name.lower()]
     if htmls:
@@ -37,7 +34,7 @@ def pick_main_html(folder: Path):
 
 
 def get_filing_date_and_year(folder: Path, main_file: Path):
-    """获取申报日期和年份"""
+    """Extract filing date and year."""
     meta = folder / "metadata.json"
     if meta.exists():
         try:
@@ -67,18 +64,23 @@ def get_filing_date_and_year(folder: Path, main_file: Path):
 
 
 def pick_all_xmls(folder: Path):
-    """返回该申报目录下的所有 XML/XBRL 文件（排除 FilingSummary.xml）"""
+    """Return all XML/XBRL documents in the filing directory, excluding FilingSummary.xml."""
     xmls = list(folder.glob("*.xml")) + list(folder.glob("*.xbrl"))
     return [x for x in xmls if x.name.lower() != "filingsummary.xml"]
 
 
-def run():
-    if not BASE.exists():
-        print(f"❌ not found: {BASE}")
-        return
+def run(base_dir: Path | str = DEFAULT_BASE_DIR, out_dir: Path | str = DEFAULT_OUTPUT_DIR) -> int:
+    """Normalize raw EDGAR download structure into the standard directory."""
+    base = Path(base_dir)
+    out = Path(out_dir)
+
+    if not base.exists():
+        print(f"[error] not found: {base}")
+        return 0
+    out.mkdir(parents=True, exist_ok=True)
     count = 0
 
-    for ticker_dir in BASE.iterdir():
+    for ticker_dir in base.iterdir():
         if not ticker_dir.is_dir():
             continue
         ticker = ticker_dir.name
@@ -92,7 +94,7 @@ def run():
                 if not acc_dir.is_dir():
                     continue
 
-                # 1. 处理 HTML 主文件
+                # 1. Copy the primary HTML file
                 main_file = pick_main_html(acc_dir)
                 if not main_file:
                     print(f"[skip] no main file: {acc_dir}")
@@ -102,20 +104,21 @@ def run():
                 accno = acc_dir.name.replace("/", "_")
 
                 ext = main_file.suffix.lower().lstrip(".") or "txt"
-                dst = OUT / f"US_{ticker}_{year}_{form}_{accno}.{ext}"
+                dst = out / f"US_{ticker}_{year}_{form}_{accno}.{ext}"
                 shutil.copy2(main_file, dst)
                 count += 1
                 print(f"[ok-html] {dst}")
 
-                # 2. 处理 XML/XBRL 文件（排除 FilingSummary）
+                # 2. Copy XML/XBRL files (excluding FilingSummary)
                 for xml_file in pick_all_xmls(acc_dir):
                     ext_xml = xml_file.suffix.lower().lstrip(".") or "xml"
-                    dst_xml = OUT / f"US_{ticker}_{year}_{form}_{accno}_{xml_file.stem}.{ext_xml}"
+                    dst_xml = out / f"US_{ticker}_{year}_{form}_{accno}_{xml_file.stem}.{ext_xml}"
                     shutil.copy2(xml_file, dst_xml)
                     count += 1
                     print(f"[ok-xml] {dst_xml}")
 
-    print(f"✅ 完成重命名/复制：{count} 文件")
+    print(f"[ok] copied and renamed {count} file(s)")
+    return count
 
 
 if __name__ == "__main__":

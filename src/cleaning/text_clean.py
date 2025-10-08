@@ -30,7 +30,7 @@ DEFAULT_OUTPUT_DIR  = PROJECT_ROOT / "data" / "clean"
 DEFAULT_MAX_SENT_LEN  = 2000
 DEFAULT_HARD_WRAP_LEN = 2800
 DEFAULT_HEARTBEAT_EVERY = 1000
-# ---- 文本检索模式：放松去噪，避免过度丢失上下文，关闭额外的 RAG 轻滤
+# ---- Text retrieval mode: relaxed filtering to preserve context, disable extra RAG pruning
 TEXT_RETRIEVAL_ONLY = True
 
 SCALE_MAP = {
@@ -56,7 +56,7 @@ RE_DATE_LONG = re.compile(rf"\b(?:{MONTHS})\s+\d{{1,2}},\s*(?:19|20)\d{{2}}\b", 
 RE_COMMISSION_FILE = re.compile(r"\bCommission\s+File\s+Number\b", re.I)
 RE_XBRL_QNAME = re.compile(r"\b[a-z][a-z0-9\-]*:[A-Za-z0-9\.]+Member\b", re.IGNORECASE)
 
-# 更温和的软切分：去掉 : ; — - 的通用切分，避免把行项目切碎
+# Softer segmentation: avoid splitting on : ; - so list items stay intact
 RE_SOFT_SPLIT = re.compile(
     r"(?:(?<=\.)\s+)|(?<=\?)\s+|(?<=!)\s+"
     r"|(?=\bus-gaap:)|(?=" + RE_DATE_ISO.pattern + r")",
@@ -87,12 +87,12 @@ RE_HEADER_NOISE = re.compile(r"""
 """, re.IGNORECASE | re.VERBOSE)
 RE_SHORT_PUNC = re.compile(r"^[\W_]+$")
 
-# ===== 新增：轻量 RAG 过滤规则 =====
+# ===== Lightweight RAG filtering rules =====
 RE_BOILERPLATE = re.compile(
     r'^\s*(FORM\s+10-[KQ]|TABLE\s+OF\s+CONTENTS|INDEX|SIGNATURES)\s*$',
     re.IGNORECASE
 )
-RE_SHORT_NUM = re.compile(r'^[0-9\-\.,]{1,6}$')  # 纯数字/短标点数字
+RE_SHORT_NUM = re.compile(r'^[0-9\-\.,]{1,6}$')  # Pure numeric or short numeric tokens
 RE_WASH_DC = re.compile(r'^\s*Washington,\s*D\.C\.(?:\s*\d{5}(?:-\d{4})?)?\s*$', re.IGNORECASE)
 
 # =============================
@@ -144,7 +144,7 @@ def unescape_and_normalize(text: str) -> str:
     s = re.sub(r"\s*\n\s*", "\n", s)
     return s.strip()
 
-# —— 保留更多可能是标题/小节名的文本
+# Keep more candidates that might be headings or subsection titles
 def is_probable_heading(s: str) -> bool:
     st = s.strip()
     return (
@@ -155,7 +155,7 @@ def is_probable_heading(s: str) -> bool:
     )
 
 def is_noise_line(s: str, min_chars: int) -> bool:
-    # 文本检索模式：尽量别丢文本，只过滤空串或纯标点
+    # In text retrieval mode drop only empty or punctuation-only strings
     if TEXT_RETRIEVAL_ONLY:
         if not s:
             return True
@@ -253,7 +253,7 @@ def parse_iso_durations(s: str) -> Tuple[List[str], List[Optional[int]]]:
     return raws, totals
 
 def _keep_for_rag(text: str) -> bool:
-    """RAG 轻量过滤：丢短数字 & 常见封面/目录行 & 简短 Washington, D.C."""
+    """Lightweight RAG filter: drop short numeric-only lines, boilerplate headers, and short Washington D.C. rows."""
     t = (text or "").strip()
     if not t:
         return False
@@ -265,7 +265,7 @@ def _keep_for_rag(text: str) -> bool:
         return False
     return True
 
-# —— 改良：数字不过度跳过，输出兼容原字段 + 详细字段
+# Improved behaviour: keep numeric spans and emit both legacy and detailed columns
 def parse_number_tokens(s: str) -> Tuple[List[str], List[Optional[float]], List[Dict[str, Any]]]:
     legal_spans: List[Tuple[int, int]] = []
     for rx in (RE_LEGAL_RULE, RE_LEGAL_SECTION, RE_LEGAL_PAR, RE_12B2):
@@ -354,11 +354,11 @@ def process_jsonl_line(
 
     out_rows: List[Dict[str, Any]] = []
 
-    # 标题更新
+    # Update heading tracking
     if is_probable_heading(text_norm):
         heading_state["current_heading"] = text_norm
 
-    # 文本检索模式：尽量保留；否则遵循原有噪声判断
+    # Keep more text in retrieval mode; otherwise apply noise rules
     if (not TEXT_RETRIEVAL_ONLY) and is_noise_line(text_norm, min_chars=min_chars) and not is_probable_heading(text_norm):
          return []
 
@@ -370,7 +370,7 @@ def process_jsonl_line(
             if (not TEXT_RETRIEVAL_ONLY) and is_noise_line(seg, min_chars=min_chars) and not is_probable_heading(seg):
                 continue
 
-            # 文本检索模式：不做额外轻量过滤，保留更多句子；非文本模式才启用
+            # Skip the lightweight filter during retrieval mode; only enable outside of it
             if (not TEXT_RETRIEVAL_ONLY) and (not _keep_for_rag(seg)):
                 continue
 
@@ -408,15 +408,15 @@ def process_jsonl_line(
                 "heading": heading_state.get("current_heading"),
             }
 
-            # —— 透传/兜底关键元数据：优先用输入行，其次用 file_meta
+            # Preserve critical metadata: prefer per-row fields, then file_meta
             passthrough_keys = ("ticker", "year", "form", "accno", "fy", "fq", "doc_date", "source_path")
 
-            # 1) 行内优先
+            # 1) Prefer inline values
             for k in passthrough_keys:
                 if k in line and line.get(k) is not None:
                     row[k] = line.get(k)
 
-            # 2) file_meta 只补空缺
+            # 2) Use file_meta only to fill blanks
             if file_meta:
                 for k in passthrough_keys:
                     if row.get(k) is None and file_meta.get(k) is not None:
@@ -427,7 +427,7 @@ def process_jsonl_line(
 
     return out_rows
 
-# —— 从路径里尽力解析元数据：.../{ticker}/{year}/{form_accno}/text.jsonl
+# Try to derive metadata from path pattern .../{ticker}/{year}/{form_accno}/text.jsonl
 FORM_RE = re.compile(r"^(10-[KQ])_(.+)$", re.I)
 def infer_meta_from_path(input_path: Path, base_dir: Optional[Path]) -> Dict[str, Any]:
     try:
@@ -459,6 +459,49 @@ def infer_meta_from_path(input_path: Path, base_dir: Optional[Path]) -> Dict[str
 # =============================
 # I/O
 # =============================
+
+
+# =============================
+# Directory helper
+# =============================
+def clean_directory(
+    input_dir: Path | str,
+    output_dir: Path | str,
+    *,
+    pattern: str = "text.jsonl",
+    min_chars: int = 30,
+    max_sentence_len: int = DEFAULT_MAX_SENT_LEN,
+    hard_wrap_len: int = DEFAULT_HARD_WRAP_LEN,
+    heartbeat_every: int = DEFAULT_HEARTBEAT_EVERY,
+) -> list[Dict[str, Any]]:
+    """Clean every file matching *pattern* under *input_dir* and mirror outputs to *output_dir*."""
+    input_dir = Path(input_dir)
+    output_dir = Path(output_dir)
+    files = list(input_dir.rglob(pattern))
+    results: list[Dict[str, Any]] = []
+    if not files:
+        log.info(f"No files matched pattern '{pattern}' under {input_dir}")
+        return results
+    log.info(f"Cleaning {len(files)} files from {input_dir} -> {output_dir}")
+    for i, file_path in enumerate(files, 1):
+        rel = file_path.relative_to(input_dir)
+        out_base_dir = output_dir / rel.parent
+        out_jsonl = out_base_dir / "text_corpus.jsonl"
+        out_parquet = out_base_dir / "text_corpus.parquet"
+        log.debug(f"[{i}/{len(files)}] cleaning {rel}")
+        result = clean_one_file(
+            file_path,
+            out_jsonl,
+            out_parquet,
+            min_chars=min_chars,
+            max_sent_len=max_sentence_len,
+            hard_wrap_len=hard_wrap_len,
+            heartbeat_every=heartbeat_every,
+            base_input_dir=input_dir,
+        )
+        results.append(result)
+    return results
+
 def clean_one_file(
     input_path: Path,
     out_jsonl: Path,
@@ -482,11 +525,11 @@ def clean_one_file(
 
     log.info(f"[start] {input_path}")
     with open(input_path, "r", encoding="utf-8") as f_in, open(out_jsonl, "w", encoding="utf-8") as f_out:
-        seen_texts = set()   # —— 单文件内按文本去重
+        seen_texts = set()   # Deduplicate within a single file
         for line in f_in:
             total_lines += 1
             if heartbeat_every and (total_lines % heartbeat_every == 0):
-                log.info(f"  processed {total_lines} input lines…")
+                log.info(f"  processed {total_lines} input lines...")
             try:
                 obj = json.loads(line)
             except Exception:
@@ -502,7 +545,7 @@ def clean_one_file(
             )
             total_sentences += len(produced)
 
-            # 流式写 JSONL（去重后写）
+# Stream-write JSONL after deduplication
             for r in produced:
                 t = (r.get("text") or "").strip()
                 if not t:
@@ -512,7 +555,7 @@ def clean_one_file(
                 seen_texts.add(t)
                 f_out.write(json.dumps(r, ensure_ascii=False) + "\n")
 
-            # 若希望 Parquet 也与 JSONL 一样去重，可以改成只 append 写出的 r
+# To dedupe Parquet like JSONL, append only emitted records
             out_rows_for_parquet.extend(produced)
 
     parquet_written = None

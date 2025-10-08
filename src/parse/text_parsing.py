@@ -12,20 +12,21 @@ import uuid
 from datetime import datetime, timezone
 
 # -----------------------------
-# 常量 & 配置
+# Constants and configuration
 # -----------------------------
 STD = Path("data/raw_reports/standard")
+DEFAULT_PROCESSED_ROOT = Path("data/processed")
 
 SCHEMA_VERSION = "0.3.0"
-WRITE_FACTS_LIKE = False        # 是否输出 facts_like.jsonl
+WRITE_FACTS_LIKE = False        # Whether to write facts_like.jsonl
 TEXT_RETRIEVAL_ONLY = True
-CHUNK_SIZE_TOK = 900           # 文本切块大小（token 近似）
-CHUNK_OVERLAP_TOK = 120         # 块间重叠
-MAX_BLOCK_CHARS = 10_000_000        # 单 block 过长时先做硬切，防止超长段落
+CHUNK_SIZE_TOK = 900           # Approximate chunk size in tokens
+CHUNK_OVERLAP_TOK = 120         # Overlap between chunks
+MAX_BLOCK_CHARS = 10_000_000        # Hard cap to break unusually long blocks
 LANG_DEFAULT = "en"
 PAGE_ID_RE   = re.compile(r'\b(?:p(?:age)?[-_]?)(\d{1,4})\b', re.I)   # p12/page-12/page12
 PAGE_TEXT_RE = re.compile(r'^\s*page\s+(\d{1,4})\s*$', re.I)  
-# 尝试使用 tiktoken（若不可用，回退到空白分词计数）
+# Try to use tiktoken; fallback to whitespace token counting
 try:
     import tiktoken
     _enc = tiktoken.get_encoding("cl100k_base")
@@ -36,16 +37,16 @@ except Exception:
     def count_tokens(s: str) -> int:
         return max(1, len(s.split()))
 
-# XBRL token 高密判定
+# Heuristics to detect XBRL-heavy text
 FACT_TOKEN_PATTERNS = [r"\bus-gaap:", r"\bxbrli:", r"\biso4217:"]
 FACT_TOKEN_MIN_COUNT = 3
 
-# HTML 中保留的标签；div/section 只有在不含下述细粒度标签时才保留，避免父子重复
+# Tags we keep from HTML; div/section only survive when no finer-grained children exist
 FINE_TAGS = {"p", "li", "h1", "h2", "h3", "h4"}
 BLOCK_TAGS = ["h1","h2","h3","h4","p","li","div","section","td","th"]
 
 
-# 噪声过滤
+# Noise filters
 RE_NOISE = re.compile(
     r"^\s*(table\s+of\s+contents|contents|index|page\s+\d+|exhibit\s+\d+|signature[s]?|"
     r"united\s+states|securities\s+and\s+exchange\s+commission)\s*$",
@@ -54,7 +55,7 @@ RE_NOISE = re.compile(
 RE_ONLY_PUNC = re.compile(r"^[\W_]+$")
 RE_MULTI_SPACE = re.compile(r"[ \t]+")
 
-# 文件名解析
+# Filename parsing
 NAME_RE = re.compile(r"^US_(.+?)_(\d{4})_(10-[KQ])_(.+)\.(.+)$", re.I)
 ACCNO_RE = re.compile(r"(\d{10}-\d{2}-\d{6})")
 FNAME_RE = re.compile(
@@ -73,14 +74,14 @@ FNAME_RE = re.compile(
     re.X | re.I,
 )
 
-# Part/Item 解析（简化模式）
+# Lightweight Part/Item parsing
 RE_PART = re.compile(r"^\s*part\s+([ivx]+)\s*[\.\-:]?\s*(.*)$", re.I)                    # Part I/II/III/IV
 RE_ITEM = re.compile(r"^\s*item\s+(\d+(\.\d+)*)\s*[\.\-:]?\s*(.*)$", re.I)               # Item 1, Item 1A, 7, 7A, 8...
 RE_WHITES = re.compile(r"\s+")
 
 
 # -----------------------------
-# 小工具
+# Small helpers
 # -----------------------------
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
@@ -110,14 +111,14 @@ def count_fact_tokens(text: str) -> int:
     return cnt
 
 def is_heading_candidate(tag, txt: str) -> bool:
-    # 1) 明确的 heading 标签
+    # 1) Explicit heading tags
     if tag.name in {"h1", "h2", "h3", "h4"}:
         return True
-    # 2) 含粗体/strong 的单句块，且长度适中
+    # 2) Bold/strong single blocks of moderate length
     if tag.name in {"div", "p"}:
         if tag.find(["b", "strong"]) and 5 <= len(txt) <= 180:
             return True
-    # 3) 文本本身像 "Item 7A ..." / "Part II ..."
+    # 3) Text that looks like "Item 7A ..." or "Part II ..."
     if RE_ITEM.match(txt) or RE_PART.match(txt):
         return True
     return False
@@ -132,7 +133,7 @@ def css_path_for_tag(tag) -> str:
             idx = sibs.index(cur) + 1 if sibs else 1
         else:
             idx = 1
-        # 只有在有合法标签名时才拼接
+        # Only append when a real tag name is present
         name = cur.name if isinstance(cur.name, str) else "node"
         parts.append(f"{name}:nth-of-type({idx})")
         cur = parent
@@ -142,7 +143,7 @@ def xpath_for_tag(tag) -> str:
     parts = []
     cur = tag
     while cur is not None and getattr(cur, "name", None):
-        # 跳过 BeautifulSoup 的根节点 [document]
+        # Skip BeautifulSoup root [document]
         if cur.name == "[document]":
             cur = cur.parent
             continue
@@ -158,7 +159,7 @@ def xpath_for_tag(tag) -> str:
         cur = parent
 
     path = "".join(reversed(parts)) or "/"
-    # 确保 /html[1] 开头
+    # Ensure XPath starts with /html[1]
     if not path.startswith("/html["):
         path = "/html[1]" + path
     return path
@@ -174,7 +175,7 @@ def nearest_anchor(tag) -> str | None:
     return None
 
 def detect_page_no(tag) -> int | None:
-    # 向上找容器属性
+    # Bubble up container attributes
     cur = tag
     while cur and getattr(cur, "name", None):
         for attr in ("id", "name", "data-page", "aria-label"):
@@ -194,7 +195,7 @@ def detect_page_no(tag) -> int | None:
                 return int(m.group(1))
         cur = cur.parent
 
-    # 向前找“Page N”文本
+    # Look backwards for literal "Page N" markers
     prev = tag; steps = 0
     while prev is not None and steps < 8:
         prev = prev.previous_sibling; steps += 1
@@ -206,7 +207,7 @@ def detect_page_no(tag) -> int | None:
     return None
 
 def load_dei_from_facts(facts_file: Path) -> dict[str, str]:
-    """从 facts.jsonl 里读 fy/fq/doc_date（取第一条或 meta 行）"""
+    """Load fy/fq/doc_date from facts.jsonl (first record or meta)."""
     if not facts_file.exists():
         return {}
     with facts_file.open("r", encoding="utf-8") as f:
@@ -228,7 +229,7 @@ def load_dei_from_facts(facts_file: Path) -> dict[str, str]:
 def parse_meta_from_filename(p: Path) -> dict:
     m = FNAME_RE.match(p.name)
     if not m:
-        # 回退到旧的 NAME_RE（不包含 docdate/txt）
+        # Fallback to the legacy NAME_RE (without docdate/txt)
         m2 = NAME_RE.match(p.name)
         if not m2:
             return {}
@@ -247,12 +248,12 @@ def parse_meta_from_filename(p: Path) -> dict:
         "accno": normalize_accno(accno),
         "doc_date": docdate,
         "ext": ext.lower(),
-        "source_path": p.as_posix(),   # ✅ 统一为 POSIX 风格路径
+        "source_path": p.as_posix(),   # Always use POSIX-style paths
     }
 
 
 def chunk_by_tokens(text: str, max_tokens: int, overlap_tokens: int) -> list[tuple[int, int, str]]:
-    """返回 [(start_tok, end_tok, chunk_text), ...]。不依赖外网库，tiktoken 可选。"""
+    """Return [(start_tok, end_tok, chunk_text), ...]; does not depend on external services and only optionally uses tiktoken."""
     if _enc:
         tokens = _enc.encode(text)
         n = len(tokens)
@@ -267,7 +268,7 @@ def chunk_by_tokens(text: str, max_tokens: int, overlap_tokens: int) -> list[tup
             i = max(0, j - overlap_tokens)
         return chunks
     else:
-        # 退化为基于空白的 token
+        # Fallback to splitting on whitespace
         words = text.split()
         n = len(words)
         chunks = []
@@ -283,28 +284,28 @@ def chunk_by_tokens(text: str, max_tokens: int, overlap_tokens: int) -> list[tup
 
 
 # -----------------------------
-# HTML → 文本抽取
+# HTML to text extraction
 # -----------------------------
 def parse_text_from_html(path: Path):
     """
-    返回 (text_items, facts_like_items)
-    text_items: 适合 RAG 的文本块（不含高密 XBRL token）
-    facts_like_items: 含大量 XBRL token 的“事实样”行，供单独存放
+    Return (text_items, facts_like_items)
+    text_items: paragraphs suitable for RAG (without XBRL-heavy content)
+    facts_like_items: rows with dense XBRL tokens for separate storage
     """
     raw = path.read_text(encoding="utf-8", errors="ignore")
     text_head = raw.lstrip()[:200].lower()
-    # 解析器选择
+    # Parser selection
     if text_head.startswith("<?xml") or "<xbrl" in text_head or "<xbrli:" in text_head:
         soup = BeautifulSoup(raw, "xml")
     else:
         warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
         soup = BeautifulSoup(raw, "lxml")
 
-    # 移除脚本与样式
+    # Remove script and style tags
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    # 收集 block，避免父子重复
+    # Gather block-level nodes while avoiding parent-child duplicates
     blocks = []
     for b in soup.find_all(BLOCK_TAGS):
         if b.name in {"div", "section"} and b.find(list(FINE_TAGS)):
@@ -315,15 +316,15 @@ def parse_text_from_html(path: Path):
     facts_like_items = []
     seen_texts = set()
 
-    # Part/Item 追踪（弱规则）
+    # Track Part/Item headings with lightweight rules
     cur_part = None      # "Part I", "Part II", ...
     cur_item = None      # "Item 7", "Item 8", ...
-    cur_heading = None   # 具体标题文本
+    cur_heading = None   # Current heading text
     cur_section_path = None
 
     def update_heading_context(s: str, tag_name: str):
         nonlocal cur_part, cur_item, cur_heading, cur_section_path
-        # 仅对标题级标签尝试识别
+        # Only attempt detection on heading-level tags
         candidate = s.strip()
         got = False
 
@@ -346,11 +347,11 @@ def parse_text_from_html(path: Path):
             cur_heading = heading
             got = True
 
-        # 若是 h1/h2/h3/h4，但没命中 Part/Item，也将其当作 heading
+        # Treat h1/h2/h3/h4 as headings even without Part/Item match
         if tag_name in {"h1", "h2", "h3", "h4"} and not got:
             cur_heading = candidate
 
-        # 生成 section_path
+        # Build section_path
         parts = []
         if cur_part:
             parts.append(cur_part)
@@ -368,7 +369,7 @@ def parse_text_from_html(path: Path):
         if b.name in {"div", "span"} and b.parent and b.parent.name in {"td", "th"}:
             cell = b.parent
             txt_full = normalize_spaces(cell.get_text(" ", strip=True))
-            if txt_full and len(txt_full) > len(txt):  # 只在更完整时替换
+            if txt_full and len(txt_full) > len(txt):  # Replace only when more complete
                 txt = txt_full
                 b = cell
         RE_FRAGMENT = re.compile(r"^\W*(of|and|or)\b.+\)$", re.I)
@@ -379,20 +380,20 @@ def parse_text_from_html(path: Path):
             continue
         seen_texts.add(txt)
 
-        # 遇到标题，更新上下文    
+        # Update context when a heading is encountered
         if is_heading_candidate(b, txt):
             update_heading_context(txt, b.name)
 
         if b.name in {"h1", "h2", "h3", "h4"}:
             update_heading_context(txt, b.name)
 
-        # 记录 tag 定位
+        # Record tag location hints
         css_path = css_path_for_tag(b)
         x_path   = xpath_for_tag(b)
         page_no  = detect_page_no(b)
         anchor   = nearest_anchor(b)
         fact_hits = count_fact_tokens(txt)
-        # 去除极短无意义文本
+        # Drop extremely short meaningless text
         if len(txt) < 3:
             continue
 
@@ -414,11 +415,11 @@ def parse_text_from_html(path: Path):
         }
 
         if (TEXT_RETRIEVAL_ONLY) or (fact_hits < FACT_TOKEN_MIN_COUNT):
-            # 控制超长 block
+            # Guard against excessively long blocks
             text_for_chunk = txt if len(txt) <= MAX_BLOCK_CHARS else txt[:MAX_BLOCK_CHARS]
             toks = count_tokens(text_for_chunk)
 
-            # 切块
+            # Chunk the block
             if toks > CHUNK_SIZE_TOK:
                 chunks = chunk_by_tokens(text_for_chunk, CHUNK_SIZE_TOK, CHUNK_OVERLAP_TOK)
                 for si, sj, piece in chunks:
@@ -434,7 +435,7 @@ def parse_text_from_html(path: Path):
                 rec["tokens"] = toks
                 text_items.append(rec)
         else:
-            # 非文本模式下才分流到 facts_like
+            # Only send to facts_like when not plain text mode
             rec = dict(rec_base)
             rec["fact_token_hits"] = fact_hits
             facts_like_items.append(rec)
@@ -443,37 +444,37 @@ def parse_text_from_html(path: Path):
 
 
 # -----------------------------
-# 单文件处理
+# Process a single file
 # -----------------------------
 def parse_one(std_file: Path, out_dir: Path):
     out_dir.mkdir(parents=True, exist_ok=True)
 
     meta = parse_meta_from_filename(std_file)
     if not meta:
-        print(f"[skip-name] 非标准命名，跳过: {std_file.name}")
+        print(f"[skip-name] non-standard name; skip: {std_file.name}")
         return
 
     suffix = std_file.suffix.lower()
     created_at = now_iso()
 
-    # 1) 严格分流：XML/XBRL 完全不进文本通道
+    # 1) Strict split: XML/XBRL never enter the text channel
     if suffix in {".xml", ".xbrl", ".xsd"}:
         print(f"[skip-xml] {std_file.name}")
         return
 
-    # 2) HTML/TXT：做抽取 + 分流
+    # 2) HTML/TXT: extract and split
     if suffix in {".htm", ".html"}:
         try:
             text_items, facts_like_items = parse_text_from_html(std_file)
         except Exception as e:
-            print(f"[error] 解析 HTML 失败: {std_file.name} -> {e}")
+            print(f"[error] HTML parsing failed: {std_file.name} -> {e}")
             return
     else:
-        # 纯文本 .txt：简化处理
+        # Plain .txt: simplified parsing
         try:
             raw = std_file.read_text(encoding="utf-8", errors="ignore")
         except Exception as e:
-            print(f"[error] 读取失败: {std_file.name} -> {e}")
+            print(f"[error] read failed: {std_file.name} -> {e}")
             return
 
         text_items, facts_like_items = [], []
@@ -486,7 +487,7 @@ def parse_one(std_file: Path, out_dir: Path):
             seen.add(l)
             j += 1
             toks = count_tokens(l)
-            # 仍然按 chunk 逻辑切
+            # Still apply chunking logic
             if toks > CHUNK_SIZE_TOK:
                 chunks = chunk_by_tokens(l, CHUNK_SIZE_TOK, CHUNK_OVERLAP_TOK)
                 for si, sj, piece in chunks:
@@ -506,12 +507,12 @@ def parse_one(std_file: Path, out_dir: Path):
                     "css_path": None, "part": None, "item": None, "heading": None, "section_path": None,
                 })
 
-    # 写出 text.jsonl
+    # Write text.jsonl
     if text_items:
         out_text = out_dir / "text.jsonl"
         with out_text.open("w", encoding="utf-8") as f:
             for x in text_items:
-                # 统一 schema 包装
+                # Wrap with uniform schema
                 rec = {
                     "schema_version": SCHEMA_VERSION,
                     "source_path": meta["source_path"],
@@ -519,7 +520,7 @@ def parse_one(std_file: Path, out_dir: Path):
                     "form": meta["form"],
                     "year": meta["year"],
                     "accno": meta["accno"],
-                    "doc_date": meta.get("doc_date"),              # 我们提供 css_path 作为定位
+                    "doc_date": meta.get("doc_date"),              # css_path serves as a locator
                     "css_path": x.get("css_path"),
                     "language": LANG_DEFAULT,
                     "tokens": x.get("tokens"),
@@ -542,9 +543,9 @@ def parse_one(std_file: Path, out_dir: Path):
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print(f"[ok] text  -> {out_text} ({len(text_items)} lines)")
     else:
-        print(f"[warn] 无可用文本: {std_file.name}")
+        print(f"[warn] no text extracted: {std_file.name}")
 
-    # 写出 facts_like.jsonl
+    # Write facts_like.jsonl
     if WRITE_FACTS_LIKE and facts_like_items:
         out_facts_like = out_dir / "facts_like.jsonl"
         with out_facts_like.open("w", encoding="utf-8") as f:
@@ -575,40 +576,44 @@ def parse_one(std_file: Path, out_dir: Path):
 
 
 # -----------------------------
-# 批量
+# Batch runner
 # -----------------------------
-def batch_parse():
+def batch_parse(input_dir: Path | str = STD, output_root: Path | str = DEFAULT_PROCESSED_ROOT) -> int:
     SKIP_EXTS = {".xml", ".xsd", ".xbrl"}
     TEXT_OK_EXTS = {".htm", ".html", ".txt"}
 
-    if not STD.exists():
-        print(f"[error] 未找到目录: {STD.resolve()}")
-        return
+    input_dir = Path(input_dir)
+    output_root = Path(output_root)
 
-    files = sorted(STD.glob("*.*"))
-    print(f"[info] 标准文件数: {len(files)} in {STD}")
+    if not input_dir.exists():
+        print(f"[error] directory missing: {input_dir.resolve()}")
+        return 0
+
+    files = sorted(input_dir.glob("*.*"))
+    print(f"[info] normalized files: {len(files)} in {input_dir}")
 
     seen = set()
+    processed = 0
 
     for f in files:
         m = FNAME_RE.match(f.name) or NAME_RE.match(f.name)
         if not m:
-            # 非标准命名跳过，避免写到意外目录
+            # Skip non-standard names to avoid misplacement
             print(f"[skip-name] {f.name}")
             continue
 
-        # 用新的 meta 解析函数做一次规范化
+        # Normalize with the new meta parser
         meta = parse_meta_from_filename(f)
         form = meta["form"]
         accno = meta["accno"]
         ext_dot = "." + meta["ext"]
 
-        # 跳过 XML 等
+        # Skip XML files
         if ext_dot in SKIP_EXTS:
             print(f"[skip-xml] {f.name}")
             continue
 
-        # 仅处理允许的文本扩展名
+        # Only process allowed text extensions
         if ext_dot not in TEXT_OK_EXTS:
             print(f"[skip-ext] {f.name}")
             continue
@@ -619,13 +624,16 @@ def batch_parse():
             continue
         seen.add(key)
 
-        out_dir = Path(f"data/processed/{meta['ticker']}/{meta['year']}/{form}_{accno}")
+        out_dir = output_root / meta['ticker'] / str(meta['year']) / f"{form}_{accno}"
         print(f"[parse] {f.name} -> {out_dir}")
         try:
             parse_one(f, out_dir)
+            processed += 1
         except Exception as e:
-            print(f"[error] 处理失败: {f.name} -> {e}")
+            print(f"[error] processing failed: {f.name} -> {e}")
+
+    print("[ok] finished: wrote RAG text (text.jsonl) and optional XBRL-dense rows (facts_like.jsonl)")
+    return processed
 
 if __name__ == "__main__":
     batch_parse()
-    print("✅ 完成：输出 RAG 文本 (text.jsonl)，可选高密 XBRL 行 (facts_like.jsonl)")

@@ -6,16 +6,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import argparse, json, re, sys
 from typing import List, Dict, Any
 
-# -------- 切块参数（只切 text） --------
-MAX_TOKENS_PER_CHUNK = 900     # ≈ 3.6k 字符
+# -------- Chunking parameters (text-only) --------
+MAX_TOKENS_PER_CHUNK = 900     # About 3.6k characters
 MAX_CHARS_PER_CHUNK  = 3600
 MIN_TOKENS_PER_CHUNK = 120
 OVERLAP_TOKENS = 80
 SENT_SPLIT_RE = re.compile(
-    r'(?<=[\.\?\!。！？])\s+'          # 句末标点
-    r'|(?<=;)\s+'                     # 分号
-    r'|(?<=:)\s+'                     # 冒号
-    r'|(?<=[—–])\s+'                  # 长短破折号
+    r'(?<=[\.\?\!。！？])\s+'          # Sentence terminators
+    r'|(?<=;)\s+'                     # Semicolons
+    r'|(?<=:)\s+'                     # Colons
+    r'|(?<=[—–])\s+'                  # Long or short dashes
 )
 BULLET_LINE_RE = re.compile(
     r'^\s*(?:[•\-–—]|'
@@ -40,7 +40,7 @@ def _tail_tokens(txt: str, n: int) -> str:
     return " ".join(toks[-n:])
 
 def _split_units(p: str) -> List[str]:
-    """先按换行拆成行，行内若是列点/枚举，直接作为独立单元；否则再用 SENT_SPLIT_RE 做细分。"""
+    """Split by newline first; treat bullet/enum lines as standalone units, otherwise apply SENT_SPLIT_RE."""
     units: List[str] = []
     for line in (p or "").splitlines():
         line = line.strip()
@@ -108,17 +108,17 @@ def emit_chunks_from_paragraphs(
     overlap_tok=OVERLAP_TOKENS
 ):
     """
-    改进点：
-    - 合并表格引导语到前块/后块
-    - 单元切分更细致（支持列点）
-    - 支持跨块重叠 overlap_tok
-    - 保证每块 >= min_tok（尽量）
-    - 在每个 content 开头注入一次 heading（极短，提升检索命中）
+    Improvements:
+    - Merge table lead-ins with adjacent chunks
+    - Finer unit splitting (supports bullet lists)
+    - Support chunk overlaps via overlap_tok
+    - Try to keep each chunk >= min_tok
+    - Inject heading at the beginning of each chunk to help retrieval
     """
-    buf: List[str] = []       # 当前块的单元缓冲
+    buf: List[str] = []       # Buffer of units for the current chunk
     btok = bchr = 0
-    last_overlap = ""         # 上一块的尾部重叠文本
-    pending_table_leadin = "" # 尚未并入的表格引导语
+    last_overlap = ""         # Tail overlap from the previous chunk
+    pending_table_leadin = "" # Deferred table lead-in text
 
     heading_prefix = (include_heading or "").strip()
     heading_prefix = (heading_prefix + "\n\n") if heading_prefix else ""
@@ -138,39 +138,39 @@ def emit_chunks_from_paragraphs(
             return
         text = _cur_buf_text()
         if not text:
-            # 清空占位
+            # Clear placeholders
             buf.clear(); btok = bchr = 0; pending_table_leadin = ""
             return
-        # 如果不是强制 flush，尽量满足最小 token
+        # Try to satisfy the minimum token count unless forcing a flush
         if not force and approx_tokens(text) < min_tok:
             return
-        # 输出块：在内容最前面注入 heading_prefix
+        # Emit chunk with heading_prefix prepended to content
         push(heading_prefix + text)
-        # 计算 overlap
+        # Compute overlap
         last_overlap = _tail_tokens(text, overlap_tok)
-        # 重置缓冲
+        # Reset buffers
         buf.clear(); btok = bchr = 0; pending_table_leadin = ""
 
     for p in paras:
-        # 表格标识与引导语：不单独出块，合并进当前/下一块
+        # Merge table markers/lead-ins into current or next chunk
         if is_table_marker(p):
-            # 优先并入 pending，直到下一次 flush
+            # Consume pending lead-ins until the next flush
             pending_table_leadin = (pending_table_leadin + "\n\n" + p.strip()).strip() if pending_table_leadin else p.strip()
-            # 这里不立即 flush
+            # Do not flush immediately here
             continue
 
-        # 按单元切
+        # Iterate units
         units = _split_units(p)
         for u in units:
             utok, uchr = approx_tokens(u), len(u)
-            # 如果加入当前缓冲会超限 -> flush 一块
+            # Flush if adding the unit would exceed limits
             if buf and (btok + utok > max_tok or bchr + uchr > max_chars):
                 _flush(force=True)
-            # 超长单元：直接作为单独块（并尽量切几次）
+            # For oversized units: emit standalone chunk, splitting further when possible
             if utok > max_tok or uchr > max_chars:
-                # 先把已有的 flush 掉
+                # Flush buffered content first
                 _flush(force=True)
-                # 对超长 u 再按句切一次，避免硬切
+                # Re-split the oversized unit by sentences to avoid ragged cuts
                 subparts = [s.strip() for s in SENT_SPLIT_RE.split(u) if s.strip()] or [u]
                 cur: List[str] = []; ctok = cchr = 0
                 for sp in subparts:
@@ -184,13 +184,13 @@ def emit_chunks_from_paragraphs(
                     buf = cur[:] ; btok = ctok ; bchr = cchr
                     _flush(force=True)
             else:
-                # 正常加入缓冲
+                # Add to buffer normally
                 buf.append(u); btok += utok; bchr += uchr
-                # 如果达到“足够大”，可以主动 flush（避免过大块）
+                # Flush proactively when chunk is already large enough
                 if btok >= max_tok * 0.9 or bchr >= max_chars * 0.9:
                     _flush(force=True)
 
-    # 最后一次 flush：放宽最小 token 限制
+    # Final flush: relax the minimum token guard
     if buf or pending_table_leadin:
         _flush(force=True)
 
@@ -212,7 +212,7 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
         local_blocks: List[str] = []
         emit_chunks_from_paragraphs(
             paras,
-            include_heading=heading,   # 新版函数会把 heading 注入到 content 顶部
+            include_heading=heading,   # inject heading into chunk content
             push=local_blocks.append,
             max_tok=max_tokens,
             max_chars=max_chars
@@ -238,7 +238,7 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
             accno = meta_b.get("accno") or "UNKNOWN"
             chunk_id = f"{accno}::text::chunk-{len(chunks)}"
 
-            # 如果 heading 没命中标签，就回退用 content 判定
+            # Fall back to content-based detection if heading is inconclusive
             sec_tag = _section_tag_from_text(heading) or _section_tag_from_text(content)
 
             meta = {
@@ -259,7 +259,7 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
             chunks.append({
                 "id": chunk_id,
                 "title": title_from_meta(heading, {**meta_b, "fy": fy}),
-                "content": content,   # 不要再前置 heading，content 已经包含
+                "content": content,   # content already includes heading prefix
                 "meta": meta
             })
 
@@ -275,29 +275,29 @@ def chunk_one_file(in_path: Path, out_path: Path, max_tokens: int, max_chars: in
 
 def compute_out_path(in_file: Path, in_root: Path, out_root: Path) -> Path:
     """
-    把 data/silver/**/text_corpus.jsonl -> data/chunked/**/text_chunks.jsonl
-    其他文件名如果被处理，则按 mirror/<file_stem>/text_chunks.jsonl 兜底。
+    Map data/silver/**/text_corpus.jsonl -> data/chunked/**/text_chunks.jsonl
+    Fallback: mirror/<file_stem>/text_chunks.jsonl for other filenames.
     """
     rel = in_file.relative_to(in_root)
     if in_file.name == "text_corpus.jsonl":
         return out_root / rel.parent / "text_chunks.jsonl"
-    # 兜底（基本不会触发，但保证健壮性）
+    # Safety fallback (rare, but keeps things robust)
     return out_root / rel.parent / in_file.stem / "text_chunks.jsonl"
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--in-root", default="data/silver", help="输入根目录（默认 data/silver）")
-    ap.add_argument("--out-root", default="data/chunked", help="输出根目录（默认 data/chunked）")
-    ap.add_argument("--workers", type=int, default=6, help="并发线程数")
+    ap.add_argument("--in-root", default="data/silver", help="Input root directory (default: data/silver)")
+    ap.add_argument("--out-root", default="data/chunked", help="Output root directory (default: data/chunked)")
+    ap.add_argument("--workers", type=int, default=6, help="Number of worker threads")
     ap.add_argument("--max_tokens", type=int, default=MAX_TOKENS_PER_CHUNK)
     ap.add_argument("--max_chars",  type=int, default=MAX_CHARS_PER_CHUNK)
-    ap.add_argument("--overwrite", action="store_true", help="已存在则覆盖")
+    ap.add_argument("--overwrite", action="store_true", help="Overwrite existing outputs")
     args = ap.parse_args()
 
     in_root  = Path(args.in_root).resolve()
     out_root = Path(args.out_root).resolve()
 
-    # 只匹配 text_corpus.jsonl
+    # Only match text_corpus.jsonl
     files = sorted(in_root.rglob("text_corpus.jsonl"))
 
     if not files:
@@ -318,15 +318,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
-'''
-python src/chunking_and_embedding/chunking1.py `
-  --in-root data\silver `
-  --out-root data\chunked `
-  --workers 8 `
-  --max_tokens 500 `
-  --max_chars 3600 `
-  --overwrite
-  '''

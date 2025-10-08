@@ -14,13 +14,13 @@ import pandas as pd
 import re
 
 HTML_TAG_RE = re.compile(r"<[^>]+>")
-PERCENT_NUM_RE = re.compile(r"\d(?:\s*\.\s*\d+)?\s*%")   # 数字紧邻的百分号，例如 "3.5%"、"25 %"
+PERCENT_NUM_RE = re.compile(r"\d(?:\s*\.\s*\d+)?\s*%")   # Percent sign tightly following a number (e.g., "3.5%" or "25 %")
 TEXTBLOCK_RE = re.compile(r"TextBlock$", re.I)
 
 def _strip_html(s: Optional[str]) -> str:
     if not s:
         return ""
-    # 去掉标签，仅保留可见文本；再压缩空白
+    # Strip HTML tags to keep visible text and collapse whitespace
     txt = HTML_TAG_RE.sub(" ", str(s))
     txt = re.sub(r"\s+", " ", txt).strip()
     return txt
@@ -45,7 +45,7 @@ SchemaVersion = str
 FactScalar = Union[Decimal, int, float, str, bool, None]
 
 # -----------------------------
-# 基础枚举
+# Base enums
 # -----------------------------
 class FilingForm(str, Enum):
     TEN_K = "10-K"
@@ -61,33 +61,33 @@ class StatementHint(str, Enum):
     OTHER = "other"
 
 # -----------------------------
-# 通用基类（元信息） —— CHANGED: 增加 fy/fq/doc_date/linkrole
+# Generic record base metadata (includes fy/fq/doc_date/linkrole)
 # -----------------------------
 class RecordBase(BaseModel):
     model_config = ConfigDict(extra="forbid")
     schema_version: SchemaVersion = "0.3.0"
 
-    # 源头追溯
+    # Source attribution
     source_path: str
 
-    # 归一/别名
+    # Normalized field aliases
     ticker: Optional[str] = Field(default=None, validation_alias=AliasChoices('ticker', 'symbol'))
     form: Optional[FilingForm] = Field(default=None, validation_alias=AliasChoices('form', 'filing_form'))
     year: Optional[int] = Field(default=None, validation_alias=AliasChoices('year', 'fiscal_year', 'report_year'))
     accno: Optional[str] = Field(default=None, validation_alias=AliasChoices('accno', 'accession', 'acc_no'))
 
-    # NEW: 期别/文档日期/链接角色（利于回溯与过滤）
+    # Period/doc-date/linkrole helpers to aid traceability and filtering
     fy: Optional[int] = None
     fq: Optional[str] = None
     doc_date: Optional[str] = None
     linkrole: Optional[str] = None
 
-    # 文档定位
+    # Document location hints
     page_no: Optional[int] = None
     page_anchor: Optional[str] = None
     xpath: Optional[str] = None
 
-    # 统计 / 语言
+    # Statistics and language metadata
     language: str = Field(default="en")
     tokens: Optional[int] = None
 
@@ -123,7 +123,7 @@ class RecordBase(BaseModel):
         return v
 
 # -----------------------------
-# 文本块（text.jsonl / text_corpus.jsonl）
+# Text chunks (text.jsonl / text_corpus.jsonl)
 # -----------------------------
 class TextChunk(RecordBase):
     id: UUID = Field(default_factory=uuid4)
@@ -158,7 +158,7 @@ class TextChunkInput(TextChunk):
         return data
 
 # -----------------------------
-# XBRL 上下文
+# XBRL context records
 # -----------------------------
 class XbrlPeriod(BaseModel):
     model_config = ConfigDict(extra="ignore")
@@ -173,12 +173,12 @@ class XbrlContext(BaseModel):
     dimensions: Dict[str, str] = {}
 
 # -----------------------------
-# Fact 输入（clean → schema）
+# Fact input (clean -> schema)
 # -----------------------------
 class FactInput(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
-    # ---- 溯源/元信息 ----
+    # ---- Provenance / metadata ----
     source_path: Optional[str] = None
     ticker: Optional[str] = None
     form:   Optional[str] = None
@@ -189,9 +189,9 @@ class FactInput(BaseModel):
     fq: Optional[str] = None
     linkrole: Optional[str] = None
 
-    # ---- 概念 & 取值 ----
+    # ---- Concept and values ----
     qname: str = Field(validation_alias=AliasChoices('qname','concept','name'))
-    # “原始/清洗后/展示”的多路输入，全部接受以便兜底
+    # Accept multiple value inputs (raw/clean/display) for resiliency
     value: FactScalar = None
     value_num: Optional[float] = Field(default=None, validation_alias=AliasChoices('value_num', 'numeric_value'))
     value_raw: Optional[str]   = Field(default=None, validation_alias=AliasChoices('value_raw','raw_value'))
@@ -199,12 +199,12 @@ class FactInput(BaseModel):
     value_raw_clean: Optional[str]   = None
     value_display:   Optional[str]   = None
 
-    # ---- 单位/小数位 ----
+    # ---- Units and decimals ----
     unit: Optional[str] = Field(default=None, validation_alias=AliasChoices('unit','uom','unit_normalized'))
-    unit_family: Optional[str] = None  # 用于判定百分比
+    unit_family: Optional[str] = None  # Helps determine percentage scaling
     decimals: Optional[int] = None
 
-    # ---- 上下文/标签 ----
+    # ---- Context and labels ----
     context_id: Optional[str] = Field(default=None, validation_alias=AliasChoices('context_id','contextRef'))
     context: Optional[XbrlContext] = None
     label_text: Optional[str] = None
@@ -212,7 +212,7 @@ class FactInput(BaseModel):
     rag_text: Optional[str] = None
     statement_hint: Optional[StatementHint] = None
 
-    # ---- 维度 ----
+    # ---- Dimensions ----
     dimensions_json: Optional[str] = None
     dimensions: Optional[Dict[str, str]] = None
 
@@ -234,22 +234,22 @@ class FactInput(BaseModel):
 
     @model_validator(mode="before")
     def _coalesce_fields(cls, data: dict) -> dict:
-        # ---------- NaN → None ----------
+        # ---------- NaN -> None ----------
         from math import isnan
         for k, v in list(data.items()):
             if isinstance(v, float) and isnan(v):
                 data[k] = None
             elif isinstance(v, str) and v.strip() == "":
-                # 空串统一成 None（避免后续判断混乱）
+                # Normalize empty strings to None to simplify downstream handling
                 data[k] = None
 
-        # ---------- year/fy 转 int ----------
+        # ---------- Coerce year/fy to int ----------
         for key in ("year", "fy"):
             v = data.get(key)
             if isinstance(v, str) and v.isdigit():
                 data[key] = int(v)
 
-        # ---------- context 兜底（若只给了扁平 period_*） ----------
+        # ---------- Backfill context when only flattened period_* fields exist ----------
         if data.get("context") is None and any(k in data for k in ("period_start","period_end","instant")):
             data["context"] = {
                 "period": {
@@ -259,7 +259,7 @@ class FactInput(BaseModel):
                 }
             }
 
-        # ---------- decimals 归一（字符串/inf） ----------
+        # ---------- Normalize decimals (string or inf) ----------
         dec = data.get("decimals")
         if isinstance(dec, str):
             s = dec.strip().lower()
@@ -273,7 +273,7 @@ class FactInput(BaseModel):
         elif isinstance(dec, float):
             data["decimals"] = int(dec) if dec.is_integer() else None
 
-        # ---------- statement_hint → Enum ----------
+        # ---------- Convert statement_hint to Enum ----------
         sh = data.get("statement_hint")
         if isinstance(sh, str):
             m = {
@@ -286,7 +286,7 @@ class FactInput(BaseModel):
             }
             data["statement_hint"] = m.get(sh.strip().lower(), data.get("statement_hint"))
 
-        # ---------- dimensions_json → dimensions ----------
+        # ---------- Expand dimensions_json ----------
         dj = data.get("dimensions_json")
         if isinstance(dj, str):
             try:
@@ -294,14 +294,14 @@ class FactInput(BaseModel):
             except Exception:
                 pass
 
-        # ---------- 统一求 value（多路兜底） ----------
+        # ---------- Consolidate value from multiple sources ----------
         def parse_human_number(s: Optional[str]) -> Optional[float]:
             if s is None:
                 return None
             txt = str(s).strip()
             if not txt:
                 return None
-            # 括号负号、去千分位、去$
+            # Handle parentheses negatives, strip thousands separators and leading $
             neg = txt.startswith("(") and txt.endswith(")")
             if neg:
                 txt = txt[1:-1]
@@ -317,7 +317,7 @@ class FactInput(BaseModel):
             val = num * mul
             return -val if neg else val
 
-        # 优先级：value_num_clean → value_num → value → value_raw_clean → value_raw → value_display
+        # Priority: value_num_clean -> value_num -> value -> value_raw_clean -> value_raw -> value_display
         val: Optional[float] = None
         if data.get("value_num_clean") is not None:
             val = data["value_num_clean"]
@@ -340,7 +340,7 @@ class FactInput(BaseModel):
         if val is None and isinstance(data.get("value_display"), str):
             val = parse_human_number(data["value_display"])
 
-        # 百分比自动 /100：unit_family=percent 或 文本带 % 或 概念名含 percent/percentage
+        # Auto divide by 100 for percentages when unit_family=percent, text contains %, or concept mentions percent/percentage
         unit_family = str(data.get("unit_family") or "").lower()
         qname_l = str(data.get("qname") or "").lower()
         text_src = None
@@ -356,11 +356,11 @@ class FactInput(BaseModel):
         if val is not None and is_percent:
             val = val / 100.0
 
-        # 若最终拿到了数值，写回到统一的 value
+        # When a numeric value is resolved, mirror it into value
         if val is not None:
             data["value"] = val
         else:
-            # 处理布尔（若还没处理）
+            # Normalize booleans (if not already handled)
             v_raw = data.get("value_raw_clean") or data.get("value_raw")
             if isinstance(v_raw, str) and v_raw.strip().lower() in ("true","false"):
                 data["value"] = (v_raw.strip().lower() == "true")
@@ -373,21 +373,21 @@ class FactInput(BaseModel):
 
 
 # -----------------------------
-# Fact（Silver 输出） —— CHANGED: 新增扁平 period_* 与回溯字段
+# Fact (silver output) includes flattened period_* and trace columns
 # -----------------------------
 # -----------------------------
-# Fact（Silver 输出）—— 扩充缺失字段
+# Fact (silver output) with expanded optional fields
 # -----------------------------
 class Fact(RecordBase):
     id: UUID = Field(default_factory=uuid4)
 
-    # 概念与取值
+    # Concepts and values
     qname: str
     value: Decimal                           # 原始高精度值（保留）
     unit: Optional[str] = None               # 原始/清洗后的单位（见映射逻辑）
     decimals: Optional[int] = None
 
-    # ✅ 新增：衍生/对齐列（全部可选，向后兼容）
+    # Derived alignment columns (all optional for backward compatibility)
     value_raw: Optional[str] = None          # 原始文本（如果能拿到）
     value_num: Optional[float] = None        # 可计算的 float（百分比已/100）
     value_display: Optional[str] = None      # 友好展示文本（K/M/B 等）
@@ -395,23 +395,23 @@ class Fact(RecordBase):
     unit_family: Optional[str] = None        # currency / shares / percent / pure
     rag_text: Optional[str] = None           # label+value+period+meta
 
-    # 上下文
+    # Context metadata
     context_id: Optional[str] = None
     context: Optional[XbrlContext] = None
 
-    # 扁平期间（便于 SQL 过滤）
+    # Flattened period fields for SQL filters
     period_start: Optional[str] = None
     period_end: Optional[str] = None
     instant: Optional[str] = None
     period_label: Optional[str] = None       # ✅ 新增：FY.. instant.. 或 FY.. a→b
 
-    # 语义
+    # Semantic hints
     statement_hint: Optional[StatementHint] = None
 
-    # ✅ 新增：维度展平签名
+    # Flattened dimension signature
     dims_signature: Optional[str] = None
 
-    # ✅ 新增：规范化期别（方便排序/过滤）
+    # Normalized period label for sorting/filtering
     fy_norm: Optional[int] = None
     fq_norm: Optional[int] = None
 
@@ -440,9 +440,9 @@ class Fact(RecordBase):
 
 
 # -----------------------------
-# 其它模型（labels/def/cal）保持原状
+# Other models (labels/def/cal) stay unchanged
 # -----------------------------
-# ---------- CalcEdge：补充 order/linkrole/追溯列 ----------
+# ---------- CalcEdge: add order/linkrole/provenance columns ----------
 class CalcEdge(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -478,7 +478,7 @@ class CalcEdge(BaseModel):
         except Exception:
             return None
 
-# ---------- DefArc：补充 order/linkrole/追溯列 ----------
+# ---------- DefArc: add order/linkrole/provenance columns ----------
 class DefArc(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -522,7 +522,7 @@ class LabelItem(BaseModel):
     label_role: Optional[str] = Field(default=None, validation_alias=AliasChoices("label_role","role"))
     lang: Optional[str] = None
 
-    # 这些是常见追溯字段，允许输入里没有
+    # Allow missing common trace fields
     ticker: Optional[str] = None
     fy: Optional[int] = None
     fq: Optional[str] = None
@@ -531,7 +531,7 @@ class LabelItem(BaseModel):
     accno: Optional[str] = None
     source_path: Optional[str] = None
 
-# ---------- Labels：best（你 clean 产物的主输入） ----------
+# ---------- Labels: best (primary clean output) ----------
 class LabelBestItem(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -547,19 +547,19 @@ class LabelBestItem(BaseModel):
     label_best_role: Optional[str] = None
     label_best_lang: Optional[str] = None
 
-    # 统一文档化长定义：可能来自 label_doc 或你示例里出现的 label_doc_x / label_doc_y
+    # Canonicalize long definitions from label_doc or label_doc_x / label_doc_y
     label_doc: Optional[str] = None
     label_search_tokens: Optional[str] = None
 
     @model_validator(mode="before")
     def _coalesce_doc_and_tokens(cls, data: dict) -> dict:
-        # 1) doc 合并：优先 label_doc，然后 x/y
+        # 1) Merge docs: prefer label_doc, then x/y variants
         doc = data.get("label_doc")
         if not doc:
             doc = data.get("label_doc_x") or data.get("label_doc_y")
         data["label_doc"] = doc
 
-        # 2) 如果没提供 label_search_tokens，则用 best + doc 自动生成
+        # 2) If label_search_tokens missing, build from best + doc
         if not data.get("label_search_tokens"):
             import re
             parts = []
@@ -573,10 +573,10 @@ class LabelBestItem(BaseModel):
         return data
 
 
-# ---------- Labels：wide（你 clean 产物的宽表） ----------
+# ---------- Labels: wide (flattened table) ----------
 class LabelWideItem(BaseModel):
     """
-    宽表含有大量动态列（label_{role}_{lang}），所以设为 extra='allow' 保留所有展开列
+    The wide table includes dynamic columns (label_{role}_{lang}), so extra='allow' retains them all
     """
     model_config = ConfigDict(extra="allow")
 
@@ -587,26 +587,26 @@ class LabelWideItem(BaseModel):
     accno: Optional[str] = None
     doc_date: Optional[str] = None
     concept: str
-    # 其它所有 label_* 列将被完整保留（extra="allow"）
+    # Preserve all other label_* columns (extra="allow")
 
 
 
 # -----------------------------
-# 工具函数：FactInput -> Fact —— CHANGED: 填充 period_* 与回溯字段
+# Helper: FactInput -> Fact; fills period_* and trace fields
 # -----------------------------
-# ===== 辅助函数（贴到文件任意位置，_map_factinput_to_fact 前即可） =====
+# ===== Helper functions (place before _map_factinput_to_fact) =====
 import math
 
 _PERCENT_RE = re.compile(r"percent|percentage", re.I)
 
 def _norm_unit(unit: Optional[str], qname: str, value_display: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    """归一化单位；返回 (unit_normalized, unit_family)"""
+    """Normalize units; return (unit_normalized, unit_family)."""
 
-    # 1) TextBlock 一律不自动推断单位
+    # 1) Never infer units for TextBlock concepts
     if qname and TEXTBLOCK_RE.search(qname):
         return None, None
 
-    # 2) 有 unit 就优先用 unit
+    # 2) Prefer explicit unit when provided
     if unit and str(unit).strip():
         s = str(unit).strip()
         m = re.search(r"(?:iso4217:)?([A-Z]{3})\b", s)
@@ -620,7 +620,7 @@ def _norm_unit(unit: Optional[str], qname: str, value_display: Optional[str]) ->
             return "pure", "pure"
         return s, None
 
-    # 3) 没有 unit 时，只在“可见文本”里出现“数字+%”才推断为百分比
+    # 3) Without explicit unit, infer percent only when visible text contains number + %
     vis = _strip_html(value_display)
     if PERCENT_NUM_RE.search(vis) or _PERCENT_RE.search(qname or ""):
         return "%", "percent"
@@ -683,16 +683,16 @@ def _fq_to_int(fq: Optional[str]) -> Optional[int]:
     m = re.search(r"(\d+)", str(fq))
     return int(m.group(1)) if m else None
 
-# ===== 替换你的 _map_factinput_to_fact =====
+# ===== Replacement for _map_factinput_to_fact =====
 def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
-    # 1) 扁平期间
+    # 1) Flatten period fields
     p_start = p_end = p_inst = None
     if fi.context and fi.context.period:
         p_start = getattr(fi.context.period, "start_date", None)
         p_end   = getattr(fi.context.period, "end_date", None)
         p_inst  = getattr(fi.context.period, "instant", None)
 
-    # 2) 数值：优先 value_num_clean → 其次 value_raw_clean → 再次 value_display / value
+    # 2) Numeric extraction priority: value_num_clean -> value_raw_clean -> value_display/value
     value_raw = None
     if fi.value_raw_clean is not None:
         value_raw = str(fi.value_raw_clean)
@@ -703,22 +703,22 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
     if fi.value_num_clean is not None:
         vnum = fi.value_num_clean
     else:
-        # 从 value_raw_clean / value_display / value 尝试解析
+        # Parse from value_raw_clean / value_display / value
         for cand in (fi.value_raw_clean, fi.value_display, fi.value):
             vnum = _to_float_maybe(cand)
             if vnum is not None:
                 break
 
-    # 3) 归一化单位、百分比 /100
+    # 3) Normalize units and adjust percentages by /100
     unit_norm, unit_family = _norm_unit(fi.unit, fi.qname, fi.value_display)
     is_textblock = bool(fi.qname and TEXTBLOCK_RE.search(fi.qname))
     if (not is_textblock) and unit_family == "percent" and vnum is not None:
         vnum = vnum / 100.0
 
-    # 4) 友好展示
+    # 4) Build friendly display text
     is_textblock = bool(fi.qname and TEXTBLOCK_RE.search(fi.qname))
     if is_textblock:
-        # 用简短提示 + 长度
+        # Compose short hint plus length
         raw_len = len(str(fi.value_display or fi.value_raw_clean or "")) 
         vdisp = f"[HTML TextBlock ~{raw_len} chars]"
     else:
@@ -729,7 +729,7 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
     fy_norm = int(fi.fy) if isinstance(fi.fy, int) else None
     fq_norm = _fq_to_int(fi.fq)
 
-    # 6) 维度签名
+    # 6) Dimension signature
     dims = None
     if fi.dimensions:
         dims = fi.dimensions
@@ -740,15 +740,15 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
     # 7) rag_text
     rag = _mk_rag_text(fi.label_text, fi.qname, vdisp, period_label, fi.ticker, fi.form, fi.accno)
 
-    # 8) Decimal 高精度 value（保底：由 vnum 或 0）
+    # 8) High-precision Decimal value (fallback from numeric or 0)
     if vnum is not None:
         dec_value = Decimal(str(vnum))
     else:
-        # 若没解析出数值，保底 0；仍可从 value_raw 看文本
+        # Fallback to 0 if parsing fails while keeping raw text
         dec_value = Decimal("0")
 
     return Fact(
-        # —— 继承 RecordBase 回溯元信息 —— 
+        # -- Inherit RecordBase provenance metadata -- 
         source_path = fi.source_path or "",
         ticker      = fi.ticker,
         form        = fi.form,
@@ -759,7 +759,7 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
         doc_date    = fi.doc_date,
         linkrole    = fi.linkrole,
 
-        # —— fact 主体 —— 
+        # -- Fact core fields -- 
         qname       = fi.qname,
         value       = dec_value,
         unit        = fi.unit or unit_norm,     # 若入参无 unit，用归一化后的
@@ -768,13 +768,13 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
         context     = fi.context,
         statement_hint = fi.statement_hint,
 
-        # —— 扁平期间 —— 
+        # -- Flattened period fields -- 
         period_start = p_start,
         period_end   = p_end,
         instant      = p_inst,
         period_label = period_label,
 
-        # —— 新增/补齐的衍生字段 —— 
+        # -- Derived fields -- 
         value_raw   = value_raw,
         value_num   = vnum,
         value_display = vdisp,
@@ -788,7 +788,7 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
 
 
 # -----------------------------
-# 路由
+# Router
 # -----------------------------
 def pick_model_for_file(p: Path) -> Type[BaseModel] | None:
     name = p.name.lower()
@@ -805,16 +805,16 @@ def pick_model_for_file(p: Path) -> Type[BaseModel] | None:
     if "definition_arcs" in name:
         return DefArc
 
-    # ---- labels 路由 ----
+    # ---- Labels router ----
     if "labels_wide" in name:
         return LabelWideItem
     if "labels_best" in name:
         return LabelBestItem
-    # 你的 clean/labels.jsonl == best，为兼容历史，这里也路由到 best
+    # clean/labels.jsonl maps to best for backward compatibility
     if name == "labels.jsonl" or name.endswith("_labels.jsonl") or name.endswith("labels.parquet"):
         return LabelBestItem
 
-    # 若还有 processed 的原始 labels.jsonl（长表）
+    # If processed labels.jsonl (long form) exists
     if "labels" in name:
         return LabelItem
 
@@ -873,7 +873,7 @@ def load_jsonl_recursive(root: Path | str, model: type[T]) -> List[T]:
     return acc
 
 # -----------------------------
-# 主流程 —— CHANGED: 对 fact.jsonl 做瘦身映射
+# Main flow: map fact.jsonl into trimmed representation
 # -----------------------------
 def process_tree(
     in_root: Path,
@@ -910,7 +910,7 @@ def process_tree(
         try:
             recs = load_jsonl(p, Model)
 
-            # 仅对 fact 做映射（瘦身+扁平期）
+            # Apply mapping only to facts (trim + flatten periods)
             if Model is FactInput:
                 recs = [_map_factinput_to_fact(x) for x in recs]
 
