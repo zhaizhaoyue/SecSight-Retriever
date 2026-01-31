@@ -4,7 +4,7 @@
 '''
 
   
-python -m src.rag.retriever.hybrid `
+python -m src.retrieval.retriever.hybrid `
   --query "What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022?" `
   --index-dir data/index `
   --content-dir data/chunked `
@@ -27,8 +27,8 @@ import torch
 import numpy as np
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 
-from src.rag.retriever.bm25_text import BM25TextRetriever, BM25TextConfig
-from src.rag.retriever.dense import DenseRetriever
+from src.retrieval.retriever.bm25_text import BM25TextRetriever, BM25TextConfig
+from src.retrieval.retriever.dense import DenseRetriever
 
 # ---------------- Cross-Encoder reranker ----------------
 class CrossEncoderReranker:

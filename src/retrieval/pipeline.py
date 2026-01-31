@@ -5,10 +5,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
-from src.rag.retriever.bm25_text import BM25TextConfig
-from src.rag.retriever.dense import DenseRetriever
-from src.rag.retriever.hybrid import HybridRetrieverRRF, CrossEncoderReranker
-from src.rag.retriever.answer_api import LLMClient, answer_with_llm
+from src.retrieval.retriever.bm25_text import BM25TextConfig
+from src.retrieval.retriever.dense import DenseRetriever
+from src.retrieval.retriever.hybrid import HybridRetrieverRRF, CrossEncoderReranker
+from src.retrieval.retriever.answer_api import LLMClient, answer_with_llm
 
 
 @dataclass

@@ -95,7 +95,7 @@ DEFAULT_CHUNK_OUTPUT = Path("data/chunked")
 DEFAULT_EMBED_OUTPUT = Path("data/index")
 
 
-from src.rag.query_pipeline import QueryRequest, run_query as execute_query
+from src.retrieval.pipeline import QueryRequest, run_query as execute_query
 from src.utils.api_keys import prompt_for_api_key
 
 # ---------------------------------------------------------------------------
@@ -257,12 +257,12 @@ def add_embed_arguments(parser: argparse.ArgumentParser, *, alias: bool = False)
 # ---------------------------------------------------------------------------
 
 def stage_download(args: argparse.Namespace) -> None:
-    from src.ingest import download_from_csv
+    from src.ingest import download
 
     email = args.download_email or os.getenv("SEC_EDGAR_EMAIL") or os.getenv("SEC_EMAIL")
     if not email:
         raise SystemExit("Download stage requires an email. Use --download-email or set SEC_EMAIL env var.")
-    download_from_csv.run(
+    download.run(
         email=email,
         outdir=args.download_outdir,
         company_name=args.download_company_name,
@@ -275,22 +275,22 @@ def stage_download(args: argparse.Namespace) -> None:
 
 
 def stage_postprocess(args: argparse.Namespace) -> None:
-    from src.parse import postprocess_edgar
+    from src.parse import postprocess
 
-    postprocess_edgar.run(base_dir=args.postprocess_base, out_dir=args.postprocess_out)
+    postprocess.run(base_dir=args.postprocess_base, out_dir=args.postprocess_out)
 
 
 def stage_parse(args: argparse.Namespace) -> None:
-    from src.parse import text_parsing
+    from src.parse import text as parse_text
 
-    text_parsing.batch_parse(input_dir=args.parse_input, output_root=args.parse_output)
+    parse_text.batch_parse(input_dir=args.parse_input, output_root=args.parse_output)
 
 
 def stage_clean(args: argparse.Namespace) -> None:
-    from src.cleaning import text_clean
+    from src.cleaning import text as clean_text
 
-    text_clean.setup_logger(args.clean_log_level)
-    text_clean.clean_directory(
+    clean_text.setup_logger(args.clean_log_level)
+    clean_text.clean_directory(
         input_dir=Path(args.clean_input),
         output_dir=Path(args.clean_output),
         pattern=args.clean_pattern,
@@ -314,7 +314,7 @@ def stage_index(args: argparse.Namespace) -> None:
 
 
 def stage_chunk(args: argparse.Namespace) -> None:
-    from src.chunking_and_embedding import chunking1
+    from src.chunking import chunk
 
     in_root = Path(args.chunk_input)
     out_root = Path(args.chunk_output)
@@ -326,8 +326,8 @@ def stage_chunk(args: argparse.Namespace) -> None:
     out_root.mkdir(parents=True, exist_ok=True)
 
     def _work(in_path: Path):
-        out_path = chunking1.compute_out_path(in_path, in_root, out_root)
-        return chunking1.chunk_one_file(
+        out_path = chunk.compute_out_path(in_path, in_root, out_root)
+        return chunk.chunk_one_file(
             in_path,
             out_path,
             max_tokens=args.chunk_max_tokens,
@@ -349,7 +349,7 @@ def stage_chunk(args: argparse.Namespace) -> None:
 
 
 def stage_embed(args: argparse.Namespace) -> None:
-    from src.chunking_and_embedding import embedding
+    from src.chunking import embedding
 
     keywords = tuple(_comma_split(args.embed_prefer_keywords))
     embedding.build_index(

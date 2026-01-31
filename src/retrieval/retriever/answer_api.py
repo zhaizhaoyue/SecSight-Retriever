@@ -3,7 +3,7 @@
 RAG Answerer - plugs HybridRetrieverRRF into an OpenAI-compatible LLM.
 Usage example (you will be prompted for the API key when needed):
 
-python -m src.rag.retriever.answer_api `
+python -m src.retrieval.retriever.answer_api `
   --query "What risks related to antitrust regulation did Apple highlight in its 2021" `
   --ticker AAPL --form 10-K --year 2021 `
   --index-dir data/index --content-dir data/chunked `
@@ -33,9 +33,9 @@ def _estimate_tokens(s: str) -> int:
         return max(1, len(s) // 4)
 
 # ---- Import hybrid retriever (your file)
-from src.rag.retriever.hybrid import HybridRetrieverRRF, CrossEncoderReranker
-from src.rag.retriever.bm25_text import BM25TextRetriever, BM25TextConfig
-from src.rag.retriever.dense import DenseRetriever
+from src.retrieval.retriever.hybrid import HybridRetrieverRRF, CrossEncoderReranker
+from src.retrieval.retriever.bm25_text import BM25TextRetriever, BM25TextConfig
+from src.retrieval.retriever.dense import DenseRetriever
 from src.utils.api_keys import prompt_for_api_key
 
 @dataclass

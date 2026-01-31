@@ -1,9 +1,9 @@
-# src/rag/retriever_dense.py
+# src/retrieval/retriever_dense.py
 """
 Pure dense (bi-encoder) retriever with optional Cross-Encoder rerank.
 
 Usage:
-python -m src.rag.retriever.dense `
+python -m src.retrieval.retriever.dense `
   --q "What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022" `
   --ticker KO --form 10-K --year 2022 `
   --topk 8 --normalize `

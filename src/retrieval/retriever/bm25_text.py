@@ -2,7 +2,7 @@
 """
 BM25 retriever — TEXT-ONLY, compact & generalized
 
-python -m src.rag.retriever.bm25_text `
+python -m src.retrieval.retriever.bm25_text `
   --q "What risks or opportunities did Coca-Cola outline in relation to emerging markets in 2022?" `
   --ticker KO --form 10-K --year 2022 `
   --content-dir data/chunked --index-dir data/index 

@@ -93,7 +93,7 @@ $tests = @(
 
 # [TRANSLATED]
 $common = @(
-  "-m", "src.rag.retriever.answer_api",
+  "-m", "src.retrieval.retriever.answer_api",
   "--index-dir", "data/index",
   "--content-dir", "data/chunked",
   "--model", "BAAI/bge-base-en-v1.5",

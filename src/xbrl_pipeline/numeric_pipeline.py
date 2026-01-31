@@ -6,9 +6,17 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Dict, Iterable, List, Optional
 
-from src.aie_for_numeric_retrieval.extraction import ExtractionTarget
-from src.aie_for_numeric_retrieval.models.llm_interface import LLMInterface
-from src.aie_for_numeric_retrieval.pipeline import AIEPipeline, AIEPipelineResult
+try:
+    from src.aie_for_numeric_retrieval.extraction import ExtractionTarget
+    from src.aie_for_numeric_retrieval.models.llm_interface import LLMInterface
+    from src.aie_for_numeric_retrieval.pipeline import AIEPipeline, AIEPipelineResult
+    AIE_MISSING = False
+except ImportError:
+    AIE_MISSING = True
+    ExtractionTarget = None  # type: ignore
+    LLMInterface = None  # type: ignore
+    AIEPipeline = None  # type: ignore
+    AIEPipelineResult = None  # type: ignore
 
 from .db_access import FactRecord, fetch_fact_records
 from .document_builder import build_document_text, build_fact_segments
@@ -35,6 +43,11 @@ class XbrlNumericPipeline:
         pipeline_config: Dict[str, Any],
         llm_config: Dict[str, Any],
     ) -> None:
+        if AIE_MISSING:
+            raise ImportError(
+                "Numeric AIE components are not available (src/aie_for_numeric_retrieval was removed). "
+                "Restore the module to run the XBRL numeric pipeline."
+            )
         self.db_url = db_url
         self.pipeline_config = pipeline_config or {}
         self.llm_config = llm_config or {}

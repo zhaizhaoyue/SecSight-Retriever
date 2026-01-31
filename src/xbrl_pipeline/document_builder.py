@@ -3,8 +3,23 @@
 from __future__ import annotations
 
 from typing import Iterable, List, Tuple
+from dataclasses import dataclass
 
-from src.aie_for_numeric_retrieval.segmentation import DocumentSegment
+try:
+    from src.aie_for_numeric_retrieval.segmentation import DocumentSegment  # type: ignore
+    AIE_MISSING = False
+except ImportError:
+    # AIE module was removed; provide a minimal placeholder so the XBRL helpers can still be imported.
+    AIE_MISSING = True
+
+    @dataclass
+    class DocumentSegment:  # type: ignore
+        id: str
+        content: str
+        segment_type: str
+        start_pos: int
+        end_pos: int
+        metadata: dict
 
 from .db_access import FactRecord
 

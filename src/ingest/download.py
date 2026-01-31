@@ -422,7 +422,7 @@ def run(email: str,
                     print(f"[fail] {ticker} {form}: {e}")
 
     ok_log.close(); fail_log.close()
-    print("[ok] download_from_csv: completed (see data/qa/)")
+    print("[ok] download: completed (see data/qa/)")
 
 # ------------------------------
 # CLI

@@ -6,13 +6,13 @@ This repository powers a financial text-retrieval pipeline that turns raw SEC fi
 
 | Stage | Script | Input -> Output | Purpose |
 | --- | --- | --- | --- |
-| 1. download | src/ingest/download_from_csv.py | data/companies.csv -> data/raw_reports/sec-edgar-filings/ | Pull the latest 10-K/10-Q filings from EDGAR. |
-| 2. postprocess | src/parse/postprocess_edgar.py | data/raw_reports/sec-edgar-filings/ -> data/raw_reports/standard/ | Normalize folder names and collect the primary HTML/XBRL payloads. |
-| 3. parse | src/parse/text_parsing.py | data/raw_reports/standard/ -> data/processed/ | Extract structured metadata and generate 	ext.jsonl chunks. |
-| 4. clean | src/cleaning/text_clean.py | data/processed/ -> data/clean/ | Sentence-level cleaning with numeric extraction helpers. |
+| 1. download | src/ingest/download.py | data/companies.csv -> data/raw_reports/sec-edgar-filings/ | Pull the latest 10-K/10-Q filings from EDGAR. |
+| 2. postprocess | src/parse/postprocess.py | data/raw_reports/sec-edgar-filings/ -> data/raw_reports/standard/ | Normalize folder names and collect the primary HTML/XBRL payloads. |
+| 3. parse | src/parse/text.py | data/raw_reports/standard/ -> data/processed/ | Extract structured metadata and generate text.jsonl chunks. |
+| 4. clean | src/cleaning/text.py | data/processed/ -> data/clean/ | Sentence-level cleaning with numeric extraction helpers. |
 | 5. index | src/index/schema.py | data/clean/ -> data/silver/ | Validate against Pydantic schemas and emit clean “silver” records. |
-| 6. chunk | src/chunking_and_embedding/chunking1.py | data/silver/ -> data/chunked/ | Build retrieval-ready text chunks with heading context. |
-| 7. mbed | src/chunking_and_embedding/embedding.py | data/chunked/ -> data/index/ | Encode chunks, build the FAISS index, and write metadata/id maps. |
+| 6. chunk | src/chunking/chunk.py | data/silver/ -> data/chunked/ | Build retrieval-ready text chunks with heading context. |
+| 7. embed | src/chunking/embedding.py | data/chunked/ -> data/index/ | Encode chunks, build the FAISS index, and write metadata/id maps. |
 
 All seven stages can be orchestrated from the new src/cli.py interface.
 
@@ -76,13 +76,13 @@ Each directory is safe to cache between runs; the CLI only overwrites data when 
 
 Every module exposes a callable entry point that mirrors the CLI:
 
-- download_from_csv.run(...)
-- postprocess_edgar.run(...)
-- 	ext_parsing.batch_parse(...)
-- 	ext_clean.clean_directory(...)
+- download.run(...)
+- postprocess.run(...)
+- 	text.batch_parse(...)
+- 	text.clean_directory(...)
 - schema.process_tree(...)
-- chunking1.chunk_one_file(...)
-- mbedding.build_index(...)
+- chunk.chunk_one_file(...)
+- embedding.build_index(...)
 
 This makes it straightforward to write unit tests around individual transformations or to embed the pipeline inside a larger orchestration framework.
 
@@ -110,3 +110,5 @@ python -m src.cli query   --query "Summarise management's discussion of inflatio
 `
 
 Use --dense-device cuda or --rerank-device cuda if GPU inference is available, and --loose-filters when you want to widen recall before applying ticker/form/year filters.
+
+

@@ -9,7 +9,7 @@ if str(ROOT) not in sys.path:
 import pytest
 
 from src import cli
-from src.rag import query_pipeline as qp
+from src.retrieval import pipeline as qp
 
 
 class _StubHybrid:
