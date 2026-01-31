@@ -1,7 +1,7 @@
 # patterns.yaml
 
 # -------------------------
-# 1) 预筛：哪些 heading/section 优先保留
+# 1) [TRANSLATED]：[TRANSLATED] heading/section [TRANSLATED]
 # -------------------------
 include_patterns:
   - '(item\s+7\b|md&a|management[’'']s\s+discussion)'
@@ -21,7 +21,7 @@ include_patterns:
   - '(backlog|bookings|remaining\s+performance\s+obligations|rpo)'
 
 # -------------------------
-# 2) 剔除：一般无关的页
+# 2) [TRANSLATED]：[TRANSLATED]
 # -------------------------
 exclude_patterns:
   - '(report\s+of\s+independent.*public\s+accounting\s+firm)'
@@ -31,11 +31,11 @@ exclude_patterns:
   - '(cover\s+page|cover\s+sheet)'
   - '(glossary|appendix)'
   - '(safe\s+harbor|forward\-looking\s+statements)'
-  # 如需保留“legal proceedings”，请删除下一行：
+  # [TRANSLATED]“legal proceedings”，[TRANSLATED]：
   - '(legal\s+proceedings\s*$)'
 
 # -------------------------
-# 3) 财报高频短语（给片段/bonus 提示用）
+# 3) [TRANSLATED]（[TRANSLATED]/bonus [TRANSLATED]）
 # -------------------------
 fin_phrases:
   - 'net sales'
@@ -77,12 +77,12 @@ fin_phrases:
   - 'note 13'
 
 # -------------------------
-# 4) 查询扩展（触发正则：扩展词列表）
-#    → Dense/BM25F 都可在检索前对 query 做语义补全
+# 4) [TRANSLATED]（[TRANSLATED]：[TRANSLATED]）
+#    → Dense/BM25F [TRANSLATED] query [TRANSLATED]
 # -------------------------
 query_expansions:
 
-  # 增长/对比
+  # [TRANSLATED]/[TRANSLATED]
   'yoy|year[\-\s]*over[\-\s]*year|y\/y|yoY':
     - 'increased'
     - 'decreased'
@@ -101,7 +101,7 @@ query_expansions:
     - 'sponsored ads'
     - 'display advertising'
     - 'video advertising'
-  # 收入/利润结构
+  # [TRANSLATED]/[TRANSLATED]
   'rev|revenue|net\s+sales':
     - 'disaggregated revenue'
     - 'segment information'
@@ -130,7 +130,7 @@ query_expansions:
     - 'non-gaap'
     - 'adjusted ebitda'
 
-  # 现金流/资本开支
+  # [TRANSLATED]/[TRANSLATED]
   'fcf|free\s+cash\s+flow':
     - 'operating cash flow'
     - 'capital expenditures'
@@ -139,7 +139,7 @@ query_expansions:
     - 'property and equipment'
     - 'investing cash flows'
 
-  # 资本结构/股东回报
+  # [TRANSLATED]/[TRANSLATED]
   'buyback|repurchase':
     - 'share repurchase'
     - 'accelerated share repurchase'
@@ -153,7 +153,7 @@ query_expansions:
     - 'earnings per share'
     - 'net income'
 
-  # 指引/宏观/汇率
+  # [TRANSLATED]/[TRANSLATED]/[TRANSLATED]
   'guidance|outlook':
     - 'md&a'
     - 'results of operations'
@@ -162,7 +162,7 @@ query_expansions:
     - 'hedging'
     - 'other income (expense)'
 
-  # SaaS/平台指标
+  # SaaS/[TRANSLATED]
   'mau|dau|arpu|churn|retention':
     - 'customer metrics'
     - 'engagement'
@@ -174,7 +174,7 @@ query_expansions:
     - 'sponsored ads'
     - 'ad sales'
 
-  # 季度语言（10-Q）
+  # [TRANSLATED]（10-Q）
   'q1|q2|q3|q4|quarter':
     - 'three months ended'
     - '(unaudited)'
@@ -182,7 +182,7 @@ query_expansions:
     - 'statements of operations'
     - 'income statements'
 
-  # 常见主题
+  # [TRANSLATED]
   'supply\s+chain|supplier|shortage|logistics':
     - 'raw materials'
     - 'components'
@@ -199,8 +199,8 @@ query_expansions:
     - 'training workload'
 
 # -------------------------
-# 5) 公司专属词表（Ticker → 词汇）
-#    用于 query 扩展/bonus；按需增删
+# 5) [TRANSLATED]（Ticker → [TRANSLATED]）
+#    [TRANSLATED] query [TRANSLATED]/bonus；[TRANSLATED]
 # -------------------------
 ticker_hints:
   AAPL:
@@ -331,7 +331,7 @@ ticker_hints:
     - 'orthopaedics'
     - 'surgery'
     - 'vision'
-    - 'consumer health'   # 历史拆分，可留作检索
+    - 'consumer health'   # [TRANSLATED]，[TRANSLATED]
     - 'immunology'
     - 'oncology'
     - 'neuroscience'

@@ -75,34 +75,34 @@ FORM_SET = {"10-K","10-Q","20-F","40-F","8-K"}
 
 
 def normalize_for_parquet(df: pd.DataFrame) -> pd.DataFrame:
-    """将 DataFrame 中 pyarrow 不友好的类型转为可写 Parquet 的类型。
-    - Decimal -> str（保留精度；如需数值计算可改成 float）
-    - dict/list -> JSON 字符串
-    - 统一部分文本列为 string dtype
+    """[TRANSLATED] DataFrame [TRANSLATED] pyarrow [TRANSLATED] Parquet [TRANSLATED]。
+    - Decimal -> str（[TRANSLATED]；[TRANSLATED] float）
+    - dict/list -> JSON [TRANSLATED]
+    - [TRANSLATED] string dtype
     """
     df = df.copy()
 
-    # 1) Decimal 列 -> str（保精度）
+    # 1) Decimal [TRANSLATED] -> str（[TRANSLATED]）
     def dec_to_str(x):
         return str(x) if isinstance(x, Decimal) else x
 
     if "value" in df.columns:
         df["value"] = df["value"].apply(dec_to_str)
 
-    # 若 value_num 里也可能混入 Decimal（通常不会），也转一下
+    # [TRANSLATED] value_num [TRANSLATED] Decimal（[TRANSLATED]），[TRANSLATED]
     if "value_num" in df.columns:
         df["value_num"] = df["value_num"].apply(
             lambda x: float(x) if isinstance(x, Decimal) else x
         )
 
-    # 2) dict/list（如 context）-> JSON 字符串
+    # 2) dict/list（[TRANSLATED] context）-> JSON [TRANSLATED]
     def to_json_if_needed(x):
         return json.dumps(x, ensure_ascii=False) if isinstance(x, (dict, list)) else x
 
     if "context" in df.columns:
         df["context"] = df["context"].apply(to_json_if_needed)
 
-    # 3) 统一一些文本列类型，避免混合类型触发推断问题
+    # 3) [TRANSLATED]，[TRANSLATED]
     textish = [
         "label_text","period_label","statement_hint","unitRef","decimals",
         "qname","ticker","form","year","accno","doc_date","source_path",
@@ -126,12 +126,12 @@ def derive_period_fq_fye(ps, pe, inst, fye):
 
     if fye and re.fullmatch(r"\d{2}-\d{2}", fye):
         fye_m, fye_d = map(int, (fye[:2], fye[3:5]))
-        # 当年财年截止日
+        # [TRANSLATED]
         fye_this = date(yyyy, fye_m, fye_d)
-        # 如果 instant 恰好是 FYE 的次日（常见 XBRL 表达）
+        # [TRANSLATED] instant [TRANSLATED] FYE [TRANSLATED]（[TRANSLATED] XBRL [TRANSLATED]）
         if cur == fye_this + timedelta(days=1):
-            return "Q4"  # 归回上一财年的 Q4
-    # 其他日期按原先平移逻辑
+            return "Q4"  # [TRANSLATED] Q4
+    # [TRANSLATED]
     mm = cur.month
     fye_mm = int(fye[:2]) if fye and re.fullmatch(r"\d{2}-\d{2}", fye) else None
     if not fye_mm:
@@ -150,8 +150,8 @@ def build_dims_signature(d: Dict[str,str]) -> str:
     return "|".join(items)
 
 def to_parquet_with_decimal(df: pd.DataFrame, out_path: Path):
-    # 推断小数精度，保险起见统一给个较大的 scale/precision
-    # 常用：precision=38, scale=10（自行按你的数据调整）
+    # [TRANSLATED]，[TRANSLATED] scale/precision
+    # [TRANSLATED]：precision=38, scale=10（[TRANSLATED]）
     schema_fields = []
     for col in df.columns:
         if col == "value":
@@ -159,17 +159,17 @@ def to_parquet_with_decimal(df: pd.DataFrame, out_path: Path):
         elif col == "context":
             schema_fields.append(pa.field(col, pa.string()))
         else:
-            # 交给 from_pandas 推断
+            # [TRANSLATED] from_pandas [TRANSLATED]
             pass
 
-    # 先把 context 转成 json 字符串
+    # [TRANSLATED] context [TRANSLATED] json [TRANSLATED]
     df2 = df.copy()
     if "context" in df2.columns:
         df2["context"] = df2["context"].apply(lambda x: json.dumps(x, ensure_ascii=False) if isinstance(x, (dict, list)) else x)
 
-    # 再构建 Arrow Table
+    # [TRANSLATED] Arrow Table
     table = pa.Table.from_pandas(df2, preserve_index=False)
-    # 可选：如果需要强制 cast
+    # [TRANSLATED]：[TRANSLATED] cast
     # table = table.set_column(table.schema.get_field_index("value"),
     #                          "value",
     #                          pa.compute.cast(table.column("value"), pa.decimal128(38,10)))
@@ -288,7 +288,7 @@ def enrich_meta_from_dei(model_xbrl, meta: Dict[str, Any]) -> Dict[str, Any]:
 
     if not meta.get("form") and form:
         fup = form.upper()
-        m = re.search(r"(10-K|10-Q|20-F|40-F|8-K)", fup)   # 兼容 "10-Q/A"
+        m = re.search(r"(10-K|10-Q|20-F|40-F|8-K)", fup)   # [TRANSLATED] "10-Q/A"
         if m:
             meta["form"] = m.group(1)
 
@@ -301,13 +301,13 @@ def enrich_meta_from_dei(model_xbrl, meta: Dict[str, Any]) -> Dict[str, Any]:
         elif meta.get("doc_date"):
             meta["fy"] = int(meta["doc_date"][:4])
 
-    # ✅ 关键：保留 DEI 的 FQ 原值（Q1/Q2/Q3/Q4/FY），不要把 FY 置空
+    # ✅ [TRANSLATED]：[TRANSLATED] DEI [TRANSLATED] FQ [TRANSLATED]（Q1/Q2/Q3/Q4/FY），[TRANSLATED] FY [TRANSLATED]
     if not meta.get("fq") and fq_s:
         q = fq_s.upper()
         if q in {"Q1","Q2","Q3","Q4","FY"}:
             meta["fq"] = q
 
-    # 可选：保留公司 FYE（兜底推断时有用）
+    # [TRANSLATED]：[TRANSLATED] FYE（[TRANSLATED]）
     if fye_s:
         m = re.search(r"(\d{2})-(\d{2})", fye_s)
         if m:
@@ -402,9 +402,9 @@ def context_to_dict(ctx) -> Dict[str, Any]:
             if mem_qn is None:
                 mem_qn = getattr(mem, "qname", None)
 
-            if hasattr(mem_qn, "qname"):            # arelle 的维度成员对象
+            if hasattr(mem_qn, "qname"):            # arelle [TRANSLATED]
                 mem_str = str(getattr(mem_qn, "qname"))
-            elif hasattr(mem_qn, "prefixedName"):   # 某些类型有 prefixedName
+            elif hasattr(mem_qn, "prefixedName"):   # [TRANSLATED] prefixedName
                 mem_str = str(mem_qn.prefixedName)
             else:
                 mem_str = str(mem_qn) if mem_qn is not None else ""
@@ -418,7 +418,7 @@ def unit_to_str(u) -> Optional[str]:
     if u is None:
         return None
     try:
-        # arelle unit 可能是 measures[0] / measures[1] 分子分母
+        # arelle unit [TRANSLATED] measures[0] / measures[1] [TRANSLATED]
         measures = getattr(u, "measures", None)
         if measures:
             num = measures[0] if len(measures) > 0 else []
@@ -429,7 +429,7 @@ def unit_to_str(u) -> Optional[str]:
             if den:
                 s = s + "/" + _fmt(den)
             return s or getattr(u, "id", None)
-        # 退回 id
+        # [TRANSLATED] id
         return getattr(u, "id", None)
     except Exception:
         return getattr(u, "id", None)
@@ -440,11 +440,11 @@ UNIT_PURE_PAT     = re.compile(r"\bpure\b", re.I)
 UNIT_PERCENT_PAT  = re.compile(r"\bpercent\b", re.I)
 def normalize_unit(unit_str: Optional[str], qname_str: str, value_display: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
     """
-    返回: (unit_normalized, unit_family)
+    [TRANSLATED]: (unit_normalized, unit_family)
     unit_family ∈ {"currency","shares","percent","pure", None}
     """
     if not unit_str:
-        # 无 unit 时尝试从 qname / 文本里推断百分号
+        # [TRANSLATED] unit [TRANSLATED] qname / [TRANSLATED]
         if value_display and "%" in value_display:
             return "%", "percent"
         if "percent" in qname_str.lower() or "percentage" in qname_str.lower():
@@ -453,28 +453,28 @@ def normalize_unit(unit_str: Optional[str], qname_str: str, value_display: Optio
 
     us = unit_str.strip()
 
-    # 货币：抓 ISO4217
+    # [TRANSLATED]：[TRANSLATED] ISO4217
     m = UNIT_CURRENCY_PAT.search(us)
     if m:
         iso = m.group(2)
         return iso.upper(), "currency"
 
-    # 股数
+    # [TRANSLATED]
     if UNIT_SHARE_PAT.search(us):
         return "shares", "shares"
 
-    # 百分比（部分 taxonomy 会写 percent/pure）
+    # [TRANSLATED]（[TRANSLATED] taxonomy [TRANSLATED] percent/pure）
     if UNIT_PERCENT_PAT.search(us):
         return "%", "percent"
 
-    # pure（无单位）
+    # pure（[TRANSLATED]）
     if UNIT_PURE_PAT.search(us):
-        # value_display 带 % 的话仍按百分比处理
+        # value_display [TRANSLATED] % [TRANSLATED]
         if value_display and "%" in value_display:
             return "%", "percent"
         return "pure", "pure"
 
-    # 没识别出来就原样返回
+    # [TRANSLATED]
     return us, None
 
 def to_float_maybe(x) -> Optional[float]:
@@ -488,7 +488,7 @@ def to_float_maybe(x) -> Optional[float]:
     if isinstance(x, (int, float)):
         return float(x)
     s = str(x).strip().replace(",", "")
-    # 去掉尾部百分号（先不除以100，这一步只做“能转 float”）
+    # [TRANSLATED]（[TRANSLATED]100，[TRANSLATED]“[TRANSLATED] float”）
     if s.endswith("%"):
         s = s[:-1]
     try:
@@ -502,22 +502,22 @@ def concept_label_text(f, lang_priority=("en","en-US","en-GB")) -> Optional[str]
         if c is None: return None
         # standard label role
         for lang in lang_priority:
-            lbl = c.label(lang=lang)  # arelle 会按标准 role 查
+            lbl = c.label(lang=lang)  # arelle [TRANSLATED] role [TRANSLATED]
             if lbl: return str(lbl).strip()
-        # 退路：不指明语言
+        # [TRANSLATED]：[TRANSLATED]
         lbl = c.label()
         return str(lbl).strip() if lbl else None
     except Exception:
         return None
     
 BALANCE_PREFIXES = {
-    "us-gaap:propertyplantandequipment",    # 任意 PPE 变体
+    "us-gaap:propertyplantandequipment",    # [TRANSLATED] PPE [TRANSLATED]
     "us-gaap:propertyplantandequipmentgross",
     "us-gaap:accumulateddepreciation",
     "us-gaap:intangibleasset",
     "us-gaap:goodwill",
     "us-gaap:inventory",
-    # 其他你想强制归类到 balance 的概念前缀……
+    # [TRANSLATED] balance [TRANSLATED]……
 }
 
 def guess_statement_hint(qname_str: str) -> str:
@@ -561,7 +561,7 @@ def parse_one(file_path: Path) -> pd.DataFrame:
     print(f"[dbg] parse_one: loaded model, facts count: {len(mx.facts) if mx and hasattr(mx, 'facts') else 'N/A'}")
     rows = []
 
-    # 1) 文件名/路径推断 + 2) 父目录兜底 + 3) DEI 兜底
+    # 1) [TRANSLATED]/[TRANSLATED] + 2) [TRANSLATED] + 3) DEI [TRANSLATED]
     base_meta = sniff_meta(file_path)
     pmeta = sniff_from_parents(file_path)
     for k, v in pmeta.items():
@@ -572,23 +572,23 @@ def parse_one(file_path: Path) -> pd.DataFrame:
     if not base_meta.get("ticker") or not base_meta.get("form") or not base_meta.get("accno"):
         print(f"[dbg] meta incomplete -> {file_path.name} -> {base_meta}")
 
-    # 4) 遍历事实，收集所需字段
+    # 4) [TRANSLATED]，[TRANSLATED]
     for f in mx.facts:
         if getattr(f,"isNil",False):
             continue
 
-        # 基本
+        # [TRANSLATED]
         qname = fact_qname(f)
         ctx   = getattr(f, "context", None)
         unit  = getattr(f, "unit", None)
 
-        # 值
+        # [TRANSLATED]
         value_raw = getattr(f, "value", None)
         value_num = fact_value_num(f)
-        # value_display：始终字符串（便于 UI 显示）
+        # value_display：[TRANSLATED]（[TRANSLATED] UI [TRANSLATED]）
         value_display = None if value_raw is None else str(value_raw).strip()
 
-        # value：优先数值（Decimal），否则原串
+        # value：[TRANSLATED]（Decimal），[TRANSLATED]
         value: Any = None
         if value_num is not None:
             try:
@@ -598,7 +598,7 @@ def parse_one(file_path: Path) -> pd.DataFrame:
         else:
             if value_raw is not None:
                 s = str(value_raw).strip()
-                # 尝试把纯数字字符串转 Decimal
+                # [TRANSLATED] Decimal
                 try:
                     value = Decimal(s.replace(",", ""))
                 except (InvalidOperation, ValueError):
@@ -607,11 +607,11 @@ def parse_one(file_path: Path) -> pd.DataFrame:
         # period
         ps, pe, inst = fact_period(f)
 
-        # 组织 context 字段
+        # [TRANSLATED] context [TRANSLATED]
         ctx_dict = context_to_dict(ctx)
         context_id = getattr(ctx, "id", None) if ctx is not None else None
 
-        # 其他
+        # [TRANSLATED]
         unit_ref  = unit_to_str(unit)
         unit_norm, unit_family = normalize_unit(unit_ref, qname, value_display)
         decimals_raw = getattr(f, "decimals", None)
@@ -626,63 +626,63 @@ def parse_one(file_path: Path) -> pd.DataFrame:
         label_txt = concept_label_text(f)
         stmt_hint = guess_statement_hint(qname)
 
-        # === 期间（基于 FYE 计算季度） ===
+        # === [TRANSLATED]（[TRANSLATED] FYE [TRANSLATED]） ===
         period_fy = derive_period_fy(ps, pe, inst, base_meta.get("fy"))
         period_fq = derive_period_fq_fye(ps, pe, inst, base_meta.get("fye")) or base_meta.get("fq")
 
-        # === 申报批次（来自 DEI），与事实期间区分 ===
+        # === [TRANSLATED]（[TRANSLATED] DEI），[TRANSLATED] ===
         filing_fy = base_meta.get("fy")
         filing_fq = base_meta.get("fq")
 
-        # 用“期间财年”生成更准确的 label
+        # [TRANSLATED]“[TRANSLATED]”[TRANSLATED] label
         per_label = period_label_builder(period_fy, ps, pe, inst)
 
-        # === 构造 row（一次性写全，避免先 update 再覆盖） ===
+        # === [TRANSLATED] row（[TRANSLATED]，[TRANSLATED] update [TRANSLATED]） ===
         row = dict(
-            # —— 事实所属期间 —— 
+            # —— [TRANSLATED] —— 
             period_fy=period_fy,
             period_fq=period_fq,
-            fy=period_fy,     # 行级 fy/fq 用事实期间
+            fy=period_fy,     # [TRANSLATED] fy/fq [TRANSLATED]
             fq=period_fq,
 
-            # —— 申报批次（方便筛选/分组） ——
+            # —— [TRANSLATED]（[TRANSLATED]/[TRANSLATED]） ——
             filing_fy=filing_fy,
             filing_fq=filing_fq,
 
-            # —— 概念与取值 ——
+            # —— [TRANSLATED] ——
             qname=qname,
-            concept=qname,                # 兼容下游期望的列名
-            value=value,                 # 若后续转为 value_num，可在 main() 里统一处理
+            concept=qname,                # [TRANSLATED]
+            value=value,                 # [TRANSLATED] value_num，[TRANSLATED] main() [TRANSLATED]
             value_raw=value_raw,
-            value_num=value_num,         # 这里是 arelle 的 xValue（可能为 None），main() 再标准化
+            value_num=value_num,         # [TRANSLATED] arelle [TRANSLATED] xValue（[TRANSLATED] None），main() [TRANSLATED]
             value_display=value_display,
 
-            # —— 单位/小数 —— 
+            # —— [TRANSLATED]/[TRANSLATED] —— 
             unitRef=unit_ref,
             unit_normalized=unit_norm,
             unit_family=unit_family,
             decimals=decimals,
 
-            # —— 上下文 —— 
+            # —— [TRANSLATED] —— 
             context_id=context_id,
             context=ctx_dict,
 
-            # —— 文本/标签/提示 —— 
+            # —— [TRANSLATED]/[TRANSLATED]/[TRANSLATED] —— 
             label_text=label_txt,
             period_label=per_label,
             statement_hint=stmt_hint,
 
-            # —— 期间细节 —— 
+            # —— [TRANSLATED] —— 
             period_type=("instant" if inst else ("duration" if (ps or pe) else None)),
             start_date=ps,
             end_date=pe,
             instant=inst,
 
-            # —— 从 context 摊平 —— 
+            # —— [TRANSLATED] context [TRANSLATED] —— 
             entity=ctx_dict.get("entity"),
             dimensions=ctx_dict.get("dimensions", {}),
 
-            # —— 元数据 —— 
+            # —— [TRANSLATED] —— 
             ticker=(base_meta.get("ticker") or None),
             form=(base_meta.get("form") or None),
             year=(str(base_meta.get("year")) if base_meta.get("year") else None),
@@ -691,7 +691,7 @@ def parse_one(file_path: Path) -> pd.DataFrame:
             source_path=file_path.as_posix()
         )
 
-        # === 维度签名（只做一次） ===
+        # === [TRANSLATED]（[TRANSLATED]） ===
         row["dims_signature"] = build_dims_signature(row["dimensions"])
 
         rows.append(row)
@@ -737,10 +737,10 @@ def main():
             if not args.quiet:
                 print(f"[dbg] empty dataframe for {fp.name}")
             continue
-        # ========== Silver → Gold 轻加工：数值与维度归档 ==========
+        # ========== Silver → Gold [TRANSLATED]：[TRANSLATED] ==========
         df["value_num"] = df.apply(lambda r: to_float_maybe(r.get("value")), axis=1)
 
-        # 百分比归一：仅在明显为百分号或数值大于 1 的情况下除以 100
+        # [TRANSLATED]：[TRANSLATED] 1 [TRANSLATED] 100
         percent_mask_base = (
             (df["unit_family"].fillna("") == "percent")
             | df["value_display"].fillna("").str.contains("%", regex=False)
@@ -749,10 +749,10 @@ def main():
         to_divide = percent_mask_base & df["value_num"].notna() & (df["value_num"].abs() > 1.0)
         df.loc[to_divide, "value_num"] = df.loc[to_divide, "value_num"] / 100.0
 
-        # 输出清洗后的数值列（供校验/下游使用）
+        # [TRANSLATED]（[TRANSLATED]/[TRANSLATED]）
         df["value_num_clean"] = df["value_num"]
 
-        # 兼容列名：提供 unit 列（优先 normalized，其次原 unitRef）
+        # [TRANSLATED]：[TRANSLATED] unit [TRANSLATED]（[TRANSLATED] normalized，[TRANSLATED] unitRef）
         if "unit" not in df.columns:
             df["unit"] = df["unit_normalized"].where(df["unit_normalized"].notna(), df["unitRef"]) 
 
@@ -768,7 +768,7 @@ def main():
 
         if "dims_signature" not in df.columns and "dimensions" in df.columns:
             df["dims_signature"] = df["dimensions"].apply(build_dims_signature)
-        # 以解析后的 DataFrame 拿元数据（已 DEI 兜底）
+        # [TRANSLATED] DataFrame [TRANSLATED]（[TRANSLATED] DEI [TRANSLATED]）
         def first_nonnull(df, col, default=None):
             if col in df.columns:
                 s = df[col].dropna()
@@ -812,7 +812,7 @@ def main():
                 df_to_save.to_csv(out_path, index=False, encoding="utf-8")
             elif fmt == "jsonl":
                 out_path = out_dir / "fact.jsonl"
-                # JSONL 可以保留原 df，这样 Decimal 会被自动序列化为字符串；如果你想统一也可用 df_to_save
+                # JSONL [TRANSLATED] df，[TRANSLATED] Decimal [TRANSLATED]；[TRANSLATED] df_to_save
                 df.to_json(out_path, orient="records", lines=True, force_ascii=False)
             else:
                 raise ValueError(f"Unknown format: {fmt}")

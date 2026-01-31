@@ -1,4 +1,4 @@
-#防止chunk index错位的工具脚本
+#[TRANSLATED]chunk index[TRANSLATED]
 # src/rag/retriever/utils_faiss.py
 from __future__ import annotations
 import json, re
@@ -56,9 +56,9 @@ def show_results_dense(D: np.ndarray, I: np.ndarray, id64_to_id: Dict[int, str],
     for r, (score, id64) in enumerate(zip(D[0], I[0]), 1):
         rid = id64_to_id.get(int(id64))
         if rid is None:
-            # 极端情况：索引命中无映射，跳过
+            # [TRANSLATED]：[TRANSLATED]，[TRANSLATED]
             continue
         meta = id_to_meta.get(rid, {})
-        score_str = f"dense={float(score):.6f}"  # 这里是纯 dense；hybrid 时可换 fused
+        score_str = f"dense={float(score):.6f}"  # [TRANSLATED] dense；hybrid [TRANSLATED] fused
         lines.append(make_row(r, score_str, meta, rid))
     print("\n".join(lines) if lines else "[WARN] no results")

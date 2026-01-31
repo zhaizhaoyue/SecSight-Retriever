@@ -4,7 +4,7 @@ import json, re
 from pathlib import Path
 from collections import Counter
 
-ROOT = Path("data/processed")   # 处理过的申报根目录
+ROOT = Path("data/processed")   # [TRANSLATED]
 
 DEI_FQ  = "dei:DocumentFiscalPeriodFocus"
 DEI_FY  = "dei:DocumentFiscalYearFocus"
@@ -20,7 +20,7 @@ def _yyyymmdd(s: str | None) -> str | None:
 
 def load_dei_from_facts(facts_path: Path) -> dict:
     """
-    从 facts.jsonl 汇总权威 DEI -> {'fy': int | None, 'fq': 'Q1|Q2|Q3|Q4|FY' | None, 'doc_date': 'YYYYMMDD' | None}
+    [TRANSLATED] facts.jsonl [TRANSLATED] DEI -> {'fy': int | None, 'fq': 'Q1|Q2|Q3|Q4|FY' | None, 'doc_date': 'YYYYMMDD' | None}
     """
     fq_counter = Counter()
     fy_counter = Counter()
@@ -40,7 +40,7 @@ def load_dei_from_facts(facts_path: Path) -> dict:
                 continue
 
             qn = (r.get("qname") or "").strip()
-            # 兼容不同字段承载数值
+            # [TRANSLATED]
             val = r.get("value_raw")
             if val is None:
                 val = r.get("value_display")
@@ -69,28 +69,28 @@ def load_dei_from_facts(facts_path: Path) -> dict:
     if fy_counter:
         out["fy"] = fy_counter.most_common(1)[0][0]
     if doc_dates:
-        out["doc_date"] = max(doc_dates)  # 多个的话取最新
+        out["doc_date"] = max(doc_dates)  # [TRANSLATED]
     return out
 
 def reorder_fields(r: dict) -> dict:
     """
-    调整字段顺序，把 fq 放在 doc_date 前面；保持其它字段的常见顺序。
-    未在列表中的键会按原相对顺序追加在末尾。
+    [TRANSLATED]，[TRANSLATED] fq [TRANSLATED] doc_date [TRANSLATED]；[TRANSLATED]。
+    [TRANSLATED]。
     """
     preferred_order = [
         "schema_version", "source_path", "ticker", "form", "year",
-        "accno", "fy", "fq", "doc_date",   # ✅ fq 在 doc_date 之前
+        "accno", "fy", "fq", "doc_date",   # ✅ fq [TRANSLATED] doc_date [TRANSLATED]
         "css_path", "language", "tokens", "created_at", "id",
         "section", "heading", "statement_hint", "text", "tag",
         "idx_source", "chunk_tok_start", "chunk_tok_end",
         "part", "item", "page_no", "page_anchor", "xpath"
     ]
     out = {}
-    # 先放优先顺序
+    # [TRANSLATED]
     for k in preferred_order:
         if k in r:
             out[k] = r[k]
-    # 再放剩余字段（保持插入顺序）
+    # [TRANSLATED]（[TRANSLATED]）
     for k, v in r.items():
         if k not in out:
             out[k] = v
@@ -98,9 +98,9 @@ def reorder_fields(r: dict) -> dict:
 
 def merge_into_jsonl(jsonl_path: Path, dei: dict, *, overwrite=True) -> tuple[int,int]:
     """
-    把 DEI 合并到 jsonl_path。
-    overwrite=True 时：以 facts 为准覆盖原值；否则仅在为空/缺失时填充。
-    返回 (读入行数, 写出行数)。
+    [TRANSLATED] DEI [TRANSLATED] jsonl_path。
+    overwrite=True [TRANSLATED]：[TRANSLATED] facts [TRANSLATED]；[TRANSLATED]/[TRANSLATED]。
+    [TRANSLATED] ([TRANSLATED], [TRANSLATED])。
     """
     if not jsonl_path.exists():
         return 0, 0
@@ -117,28 +117,28 @@ def merge_into_jsonl(jsonl_path: Path, dei: dict, *, overwrite=True) -> tuple[in
             try:
                 r = json.loads(line)
             except Exception:
-                # 保底原样写回
+                # [TRANSLATED]
                 fout.write(line); n_out += 1; continue
 
-            # 合并 fy/fq/doc_date
+            # [TRANSLATED] fy/fq/doc_date
             for k in ("fy", "fq", "doc_date"):
                 if k in dei and dei[k] is not None:
                     if overwrite or r.get(k) in (None, "", 0):
                         r[k] = dei[k]
 
-            # 调整输出顺序（确保 fq 在 doc_date 之前）
+            # [TRANSLATED]（[TRANSLATED] fq [TRANSLATED] doc_date [TRANSLATED]）
             r = reorder_fields(r)
             fout.write(json.dumps(r, ensure_ascii=False) + "\n")
             n_out += 1
 
-    # 需要可以删除备份：bak.unlink(missing_ok=True)
+    # [TRANSLATED]：bak.unlink(missing_ok=True)
     return n_in, n_out
 
 def main():
     updated = 0
     for text_path in ROOT.rglob("text.jsonl"):
         filing_dir = text_path.parent
-        facts_path = filing_dir / "facts.jsonl"  # 你也可以换成 facts.parquet 的读取逻辑
+        facts_path = filing_dir / "facts.jsonl"  # [TRANSLATED] facts.parquet [TRANSLATED]
         dei = load_dei_from_facts(facts_path)
         if not dei:
             continue

@@ -216,7 +216,7 @@ def save_all(db_url: str,
              def_edges: List[Dict[str, Any]]):
     eng = init_db(db_url)
 
-    # 附加 filing_id / 元数据（source_path）
+    # [TRANSLATED] filing_id / [TRANSLATED]（source_path）
     def attach(rows):
         for r in rows:
             r["filing_id"] = filing_id
@@ -236,7 +236,7 @@ def save_all(db_url: str,
     pre_edges = attach(pre_edges)
     def_edges = attach(def_edges)
 
-    # JSON 列序列化
+    # JSON [TRANSLATED]
     if facts:
         for r in facts:
             r["footnote_refs"] = json.dumps(r.get("footnote_refs", []))

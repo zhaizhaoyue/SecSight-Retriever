@@ -111,7 +111,7 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
         if c in df.columns:
             df.drop(columns=[c], inplace=True)
 
-    # ---- 针对 TextBlock：抽取数值；若无数值则丢弃 ----
+    # ---- [TRANSLATED] TextBlock：[TRANSLATED]；[TRANSLATED] ----
     def is_textblock_row(row: pd.Series) -> bool:
         qn = str(row.get("qname") or "")
         return "textblock" in qn.lower()
@@ -119,13 +119,13 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
     def html_to_text_lines(html: str) -> list[str]:
         soup = BeautifulSoup(html, "lxml")
         lines: list[str] = []
-        # 优先解析表格行
+        # [TRANSLATED]
         for tr in soup.find_all("tr"):
             t = " ".join(td.get_text(" ", strip=True) for td in tr.find_all(["td","th"]))
             t = re.sub(r"\s+", " ", t).strip()
             if t:
                 lines.append(t)
-        # 若表格为空，则退化为按块的文本
+        # [TRANSLATED]，[TRANSLATED]
         if not lines:
             txt = soup.get_text("\n", strip=True)
             for ln in txt.splitlines():
@@ -143,7 +143,7 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
         for idx, row in df.iterrows():
             if not is_textblock_row(row):
                 continue
-            # 原 HTML 源
+            # [TRANSLATED] HTML [TRANSLATED]
             html = None
             for c in ("value_raw", "value_display"):
                 v = row.get(c)
@@ -151,7 +151,7 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
                     html = v
                     break
             if not html:
-                # 非 HTML 的 textblock，当作无数值，直接丢弃
+                # [TRANSLATED] HTML [TRANSLATED] textblock，[TRANSLATED]，[TRANSLATED]
                 drop_idx.add(idx)
                 continue
 
@@ -161,7 +161,7 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
                 for m in NUM_PAT.finditer(ln):
                     tok = m.group(1)
                     tok_clean = tok.strip()
-                    # 解析符号/括号负号/千分位/%
+                    # [TRANSLATED]/[TRANSLATED]/[TRANSLATED]/%
                     is_pct = tok_clean.endswith("%")
                     has_dollar = tok_clean.startswith("$") or " $" in ln
                     s = tok_clean.replace("$", "").replace(",", "")
@@ -177,36 +177,36 @@ def upgrade_one(facts_path: Path) -> Optional[Path]:
                         val = val / 100.0
 
                     out = row.to_dict()
-                    # 标记为抽取
+                    # [TRANSLATED]
                     out["extracted_from_textblock"] = True
                     out["parent_concept"] = out.get("qname")
                     out["concept"] = out.get("concept") or out.get("qname")
                     out["value_display"] = tok_clean
                     out["value_num_clean"] = val
                     out["value_num"] = val
-                    # 单位（尽量保守）
+                    # [TRANSLATED]（[TRANSLATED]）
                     if is_pct:
                         out["unit"] = "%"
                         out["unit_family"] = "percent"
                     elif has_dollar:
                         out["unit"] = "$"
-                    # 维度签名避免与原行冲突
+                    # [TRANSLATED]
                     sig = str(out.get("dims_signature") or "")
                     if sig:
                         sig = sig + "|extracted=textblock"
                     else:
                         sig = "extracted=textblock"
                     out["dims_signature"] = sig
-                    # 追加文本上下文（截断）
+                    # [TRANSLATED]（[TRANSLATED]）
                     out["text_excerpt"] = (ln[:256] + "…") if len(ln) > 256 else ln
 
                     extracted_rows.append(out)
                     found_any = True
 
-            # 对应的原 TextBlock 行删除
+            # [TRANSLATED] TextBlock [TRANSLATED]
             drop_idx.add(idx)
 
-    # 丢弃 textblock 原始行，合并抽取行
+    # [TRANSLATED] textblock [TRANSLATED]，[TRANSLATED]
     if drop_idx:
         df = df.drop(index=list(drop_idx))
     if extracted_rows:

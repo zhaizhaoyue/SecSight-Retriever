@@ -1,80 +1,80 @@
-# AIE数值检索系统配置文件
-# 整合现有RAG系统，专门为数值检索任务优化
+# AIE[TRANSLATED]
+# [TRANSLATED]RAG[TRANSLATED]，[TRANSLATED]
 
-# 流水线阶段控制
+# [TRANSLATED]
 stages:
-  segmentation: true      # 文档分段
-  retrieval: true         # 信息检索  
-  summarization: true     # 文档摘要
-  extraction: true        # 信息提取
+  segmentation: true      # [TRANSLATED]
+  retrieval: true         # [TRANSLATED]  
+  summarization: true     # [TRANSLATED]
+  extraction: true        # [TRANSLATED]
 
-# 数据源配置
+# [TRANSLATED]
 data:
   root_dir: "data"
-  # 优先数据源：text_chunks（包含完整上下文，最适合数值检索）
+  # [TRANSLATED]：text_chunks（[TRANSLATED]，[TRANSLATED]）
   preferred_source: "text_chunks"
-  # 备选数据源：facts（结构化数据），tables（表格数据）
+  # [TRANSLATED]：facts（[TRANSLATED]），tables（[TRANSLATED]）
   fallback_sources: ["facts", "tables"]
 
-# 检索系统配置（整合现有RAG）
+# [TRANSLATED]（[TRANSLATED]RAG）
 retrieval:
-  # 索引和内容目录
+  # [TRANSLATED]
   index_dir: "data/index"
   content_dir: "data/chunked"
   
-  # 模型配置
+  # [TRANSLATED]
   model: "BAAI/bge-base-en-v1.5"
-  device: "cuda"  # 或 "cpu"
+  device: "cuda"  # [TRANSLATED] "cpu"
   
-  # 混合检索参数
+  # [TRANSLATED]
   use_reranker: true
   reranker_model: "cross-encoder/ms-marco-MiniLM-L-6-v2"
   
-  # RRF融合参数
+  # RRF[TRANSLATED]
   rrf_k: 60.0
-  w_bm25: 1.0      # BM25权重
-  w_dense: 2.0     # Dense检索权重
-  ce_weight: 0.5   # Cross-encoder权重
+  w_bm25: 1.0      # BM25[TRANSLATED]
+  w_dense: 2.0     # Dense[TRANSLATED]
+  ce_weight: 0.5   # Cross-encoder[TRANSLATED]
   
-  # 检索数量参数
+  # [TRANSLATED]
   bm25_topk: 200
   dense_topk: 200
   ce_candidates: 256
   final_topk: 10
   
-  # 数值检索优化
+  # [TRANSLATED]
   numeric_enhancement: true
   numeric_keywords: ["million", "billion", "thousand", "$", "revenue", "income", "profit", "%", "percent", "rate", "growth", "margin"]
 
-# 分段配置
+# [TRANSLATED]
 segmentation:
   method: "hybrid"  # fixed_length, semantic, hybrid
   max_tokens: 900
   overlap_tokens: 80
   use_title: true
 
-# 摘要配置
+# [TRANSLATED]
 summarization:
   strategy: "refine"  # stuff, map_reduce, refine
   max_tokens: 2000
   temperature: 0.1
 
-# 提取配置
+# [TRANSLATED]
 extraction:
   method: "hybrid"     # llm, regex, hybrid
-  regex_first: true    # hybrid模式下优先使用regex
+  regex_first: true    # hybrid[TRANSLATED]regex
   precision_mode: "direct"  # direct, shot
   
-  # 数值提取优化
+  # [TRANSLATED]
   numeric_patterns:
     currency: "\\$?[\\d,]+\\.?\\d*[MmBbKk]?"
     percentage: "\\d+\\.?\\d*%"
     number: "[-+]?\\d{1,3}(?:,\\d{3})*(?:\\.\\d+)?"
   
-  # 置信度阈值
+  # [TRANSLATED]
   confidence_threshold: 0.5
 
-# LLM配置
+# LLM[TRANSLATED]
 llm:
   provider: "deepseek"  # deepseek, openai, huggingface
   model_name: "deepseek-chat"
@@ -82,104 +82,104 @@ llm:
   max_tokens: 4096
   max_concurrent: 2
   
-  # 缓存和重试
+  # [TRANSLATED]
   enable_cache: true
   cache_ttl: 3600
   max_retries: 3
   
-  # 速率限制
-  rate_limit: 60  # 每分钟调用次数
+  # [TRANSLATED]
+  rate_limit: 60  # [TRANSLATED]
 
-# 批处理配置
+# [TRANSLATED]
 batch:
   max_workers: 4
-  document_limit: 100  # 每次处理的文档数量限制
+  document_limit: 100  # [TRANSLATED]
 
-# 性能优化
+# [TRANSLATED]
 performance:
-  # 索引缓存
+  # [TRANSLATED]
   cache_index: true
-  # 内容缓存
+  # [TRANSLATED]
   cache_segments: true
   cache_retrieval: false
   
-  # 并发控制
+  # [TRANSLATED]
   llm_max_concurrency: 2
 
-# 评估配置
+# [TRANSLATED]
 evaluation:
-  # RETA指标阈值
+  # RETA[TRANSLATED]
   reta_tolerances: [0.01, 0.03, 0.05, 0.10]
   
-  # 输出配置
+  # [TRANSLATED]
   save_results: true
   output_dir: "output/aie_results"
 
-# 日志配置
+# [TRANSLATED]
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   file: "logs/aie_numeric_retrieval.log"
 
-# 常用提取目标模板
+# [TRANSLATED]
 extraction_targets:
   financial_metrics:
     - name: "revenue"
-      description: "营业收入/总收入"
+      description: "[TRANSLATED]/[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["revenue", "net sales", "total revenue", "net revenue"]
     
     - name: "net_income"
-      description: "净利润/净收益"
+      description: "[TRANSLATED]/[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["net income", "net earnings", "profit"]
     
     - name: "total_assets"
-      description: "总资产"
+      description: "[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["total assets"]
     
     - name: "operating_income"
-      description: "营业利润"
+      description: "[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["operating income", "operating profit"]
     
     - name: "cash_and_equivalents"
-      description: "现金及现金等价物"
+      description: "[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["cash and cash equivalents", "cash"]
     
     - name: "total_debt"
-      description: "总债务"
+      description: "[TRANSLATED]"
       data_type: "number"
-      unit: "美元"
+      unit: "[TRANSLATED]"
       keywords: ["total debt", "total borrowings"]
 
   ratios:
     - name: "gross_margin"
-      description: "毛利率"
+      description: "[TRANSLATED]"
       data_type: "percentage"
       unit: "%"
       keywords: ["gross margin", "gross profit margin"]
     
     - name: "operating_margin"
-      description: "营业利润率"
+      description: "[TRANSLATED]"
       data_type: "percentage"
       unit: "%"
       keywords: ["operating margin"]
     
     - name: "net_margin"
-      description: "净利润率"
+      description: "[TRANSLATED]"
       data_type: "percentage"
       unit: "%"
       keywords: ["net margin", "net profit margin"]
 
-# 示例查询
+# [TRANSLATED]
 example_queries:
   - query: "What was the company's revenue in 2023?"
     targets: ["revenue"]

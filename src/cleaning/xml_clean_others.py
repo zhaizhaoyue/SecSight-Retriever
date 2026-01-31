@@ -8,14 +8,14 @@ import numpy as np
 import pandas as pd
 
 # -----------------------
-# 项目路径
+# [TRANSLATED]
 # -----------------------
 PROJECT_ROOT        = Path(__file__).resolve().parents[2]
 DEFAULT_INPUT_DIR   = PROJECT_ROOT / "data" / "processed"
 DEFAULT_OUTPUT_DIR  = PROJECT_ROOT / "data" / "clean"
 
 # -----------------------
-# 基础 IO
+# [TRANSLATED] IO
 # -----------------------
 def read_table(path: Path) -> pd.DataFrame:
     suf = path.suffix.lower()
@@ -29,7 +29,7 @@ def read_table(path: Path) -> pd.DataFrame:
                 try:
                     rows.append(json.loads(s))
                 except Exception as e:
-                    print(f"    [WARN] {path.name} 第{i}行解析失败：{e}")
+                    print(f"    [WARN] {path.name} [TRANSLATED]{i}[TRANSLATED]：{e}")
         return pd.DataFrame(rows)
     elif suf == ".parquet":
         return pd.read_parquet(path)
@@ -43,7 +43,7 @@ def try_write_parquet(df: pd.DataFrame, out_path: Path) -> bool:
             return True
         except Exception:
             continue
-    print(f"    [WARN] 未安装 pyarrow/fastparquet，跳过写入 {out_path.name}。")
+    print(f"    [WARN] [TRANSLATED] pyarrow/fastparquet，[TRANSLATED] {out_path.name}。")
     return False
 
 def save_jsonl(df: pd.DataFrame, out_path: Path) -> None:
@@ -52,23 +52,23 @@ def save_jsonl(df: pd.DataFrame, out_path: Path) -> None:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 def mirror_out_dir(in_file: Path, in_root: Path, out_root: Path) -> Path:
-    """把 processed 的相对路径镜像到 clean 下（去掉文件名，保留其父目录层级）"""
+    """[TRANSLATED] processed [TRANSLATED] clean [TRANSLATED]（[TRANSLATED]，[TRANSLATED]）"""
     rel = in_file.parent.relative_to(in_root)  # e.g. AAPL/2023/10-Q_xxx
     out_dir = (out_root / rel).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     return out_dir
 
 # -----------------------
-# labels 优选（英文优先；standard > terse > verbose）
+# labels [TRANSLATED]（[TRANSLATED]；standard > terse > verbose）
 # -----------------------
 # -----------------------
-# labels 优选（角色/语言归一 + 最佳挑选）
+# labels [TRANSLATED]（[TRANSLATED]/[TRANSLATED] + [TRANSLATED]）
 # -----------------------
 
 # -----------------------
-# labels 优选（角色/语言归一 + 最佳挑选）
+# labels [TRANSLATED]（[TRANSLATED]/[TRANSLATED] + [TRANSLATED]）
 # -----------------------
-ROLE_PRIORITY = ["standard", "terse", "total", "documentation", "verbose"]  # UI 友好为先
+ROLE_PRIORITY = ["standard", "terse", "total", "documentation", "verbose"]  # UI [TRANSLATED]
 ROLE_MAP = {
     "http://www.xbrl.org/2003/role/label": "standard",
     "http://www.xbrl.org/2003/role/terseLabel": "terse",
@@ -94,7 +94,7 @@ def norm_lang(lang: Optional[str]) -> Optional[str]:
     return LANG_NORM.get(t, lang)
 
 def to_tokens(*txts: Optional[str]) -> Optional[str]:
-    """把若干文本拼起来做检索 token，NaN 安全；空则返回 None"""
+    """[TRANSLATED] token，NaN [TRANSLATED]；[TRANSLATED] None"""
     parts: List[str] = []
     for txt in txts:
         if txt is None:
@@ -106,7 +106,7 @@ def to_tokens(*txts: Optional[str]) -> Optional[str]:
             parts.append(s)
     if not parts:
         return None
-    # 去重 + 规整空白
+    # [TRANSLATED] + [TRANSLATED]
     s = " ".join(parts)
     s = re.sub(r"\s+", " ", s)
     return s or None
@@ -115,13 +115,13 @@ def to_tokens(*txts: Optional[str]) -> Optional[str]:
 
 def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     """
-    支持三种输入：
-      A) 已是 best：含 label_best/label_best_role/label_best_lang
-      B) 宽表 wide：列名形如 label_{role}_{lang}（如 label_standard_en-US）
-      C) 原始长表：concept + (label_text/label, label_role/role, lang)
-    输出：
-      best_df：每 (ticker, fy, form, accno, concept) 一行，含 label_best/label_best_role/label_best_lang/label_doc/label_search_tokens
-      wide_df：若输入是 wide 或长表则返回展开宽表；若输入本来就是 best 且无长表信息，则返回仅键列
+    [TRANSLATED]：
+      A) [TRANSLATED] best：[TRANSLATED] label_best/label_best_role/label_best_lang
+      B) [TRANSLATED] wide：[TRANSLATED] label_{role}_{lang}（[TRANSLATED] label_standard_en-US）
+      C) [TRANSLATED]：concept + (label_text/label, label_role/role, lang)
+    [TRANSLATED]：
+      best_df：[TRANSLATED] (ticker, fy, form, accno, concept) [TRANSLATED]，[TRANSLATED] label_best/label_best_role/label_best_lang/label_doc/label_search_tokens
+      wide_df：[TRANSLATED] wide [TRANSLATED]；[TRANSLATED] best [TRANSLATED]，[TRANSLATED]
     """
     if labels_df is None or labels_df.empty:
         cols_best = ["ticker","fy","form","accno","concept","label_best","label_best_role","label_best_lang","label_doc","label_search_tokens"]
@@ -146,7 +146,7 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         if not parts: return None
         return re.sub(r"\s+", " ", " ".join(parts)) or None
 
-    # ---------- A) 输入已是 best ----------
+    # ---------- A) [TRANSLATED] best ----------
     if {"label_best","label_best_role","label_best_lang"}.issubset(df.columns):
         best_df = df.copy()
         if "label_doc" not in best_df.columns:
@@ -160,7 +160,7 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         wide_df = pd.DataFrame(columns=[c for c in ["ticker","fy","form","accno","concept"] if c in df.columns])
         return best_df[keep].drop_duplicates().reset_index(drop=True), wide_df
 
-    # ---------- B) 输入是宽表 wide ----------
+    # ---------- B) [TRANSLATED] wide ----------
     wide_like_cols = [c for c in df.columns if c.startswith("label_")]
     def _parse_col(c: str):
         m = re.match(r"^label_([A-Za-z]+)_(.+)$", c)
@@ -200,10 +200,10 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
                 best_df[col] = pd.to_numeric(best_df[col], errors="coerce").astype("Int64")
             if col in df.columns:
                 df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
-        return best_df.drop_duplicates().reset_index(drop=True), df  # wide 直接返回原表
+        return best_df.drop_duplicates().reset_index(drop=True), df  # wide [TRANSLATED]
 
-    # ---------- C) 原始长表 ----------
-    # 别名容错
+    # ---------- C) [TRANSLATED] ----------
+    # [TRANSLATED]
     if "label_text" not in df.columns and "label" in df.columns:
         df["label_text"] = df["label"]
     if "label_role" not in df.columns and "role" in df.columns:
@@ -211,7 +211,7 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     if "lang" not in df.columns:
         df["lang"] = pd.NA
 
-    # 归一 role/lang
+    # [TRANSLATED] role/lang
     def _norm_role(uri: Optional[str]) -> str:
         if not uri: return "standard"
         mp = {
@@ -240,7 +240,7 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     def _pick_best_long(g: pd.DataFrame) -> pd.Series:
         g2 = g.sort_values(["__role_rk","__lang_rk"])
         top = g2.iloc[0]
-        # 额外：从组里找 documentation
+        # [TRANSLATED]：[TRANSLATED] documentation
         doc_texts = g[g["label_role"]=="documentation"]["label_text"].dropna().astype(str)
         label_doc = max(doc_texts, key=len) if not doc_texts.empty else None
         return pd.Series({
@@ -269,7 +269,7 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     best_df = best_df.merge(doc_df, on=gcols, how="left")
     best_df["label_search_tokens"] = best_df.apply(lambda r: _tokens(r.get("label_best"), r.get("label_doc")), axis=1)
 
-    # wide：展开
+    # wide：[TRANSLATED]
     df["lang_safe"] = df["lang"].fillna("none")
     df["colkey"] = "label_" + df["label_role"].astype(str) + "_" + df["lang_safe"].astype(str)
     wide_df = df.pivot_table(
@@ -289,17 +289,17 @@ def build_preferred_labels(labels_df: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
 
 
 # -----------------------
-# 清洗：calculation_edges
+# [TRANSLATED]：calculation_edges
 # -----------------------
 def clean_calculation_edges(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
         return df
-    # 统一列存在
+    # [TRANSLATED]
     for c in ["parent_concept","child_concept","weight","order","linkrole",
               "ticker","year","fy","fq","form","accno","doc_date","file_type","source_path"]:
         if c not in df.columns:
             df[c] = pd.NA
-    # 类型规整
+    # [TRANSLATED]
     def _to_float(x):
         try: return float(x)
         except Exception: return np.nan
@@ -309,14 +309,14 @@ def clean_calculation_edges(df: pd.DataFrame) -> pd.DataFrame:
     for col in ["year", "fy"]:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("Int64")
-    # 去重
+    # [TRANSLATED]
     keep = ["parent_concept","child_concept","weight","order","linkrole",
             "ticker","year","fy","fq","form","accno","doc_date","file_type","source_path"]
     df = df[keep].drop_duplicates().reset_index(drop=True)
     return df
 
 # -----------------------
-# 清洗：definition_arcs
+# [TRANSLATED]：definition_arcs
 # -----------------------
 def clean_definition_arcs(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty:
@@ -331,7 +331,7 @@ def clean_definition_arcs(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # -----------------------
-# 清洗：labels（输入 labels.parquet / labels.jsonl → 输出优选映射）
+# [TRANSLATED]：labels（[TRANSLATED] labels.parquet / labels.jsonl → [TRANSLATED]）
 # -----------------------
 def clean_labels(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df.empty:
@@ -342,34 +342,34 @@ def clean_labels(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return best_df, wide_df
 
 # -----------------------
-# 主逻辑
+# [TRANSLATED]
 # -----------------------
 def main():
     ap = argparse.ArgumentParser(description="Clean calculation_edges / definition_arcs / labels with processed→clean mirroring")
-    ap.add_argument("--root", type=str, default=None, help="输入根目录（默认 PROJECT_ROOT/data/processed）")
-    ap.add_argument("--dry-run", action="store_true", help="只扫描不写文件")
+    ap.add_argument("--root", type=str, default=None, help="[TRANSLATED]（[TRANSLATED] PROJECT_ROOT/data/processed）")
+    ap.add_argument("--dry-run", action="store_true", help="[TRANSLATED]")
     args = ap.parse_args()
 
     in_root  = Path(args.root).expanduser().resolve() if args.root else DEFAULT_INPUT_DIR.resolve()
     out_root = DEFAULT_OUTPUT_DIR.resolve()
 
     if not in_root.exists():
-        print(f"[INFO] 输入根目录不存在：{in_root}")
+        print(f"[INFO] [TRANSLATED]：{in_root}")
         return
 
-    # 搜索三类文件
+    # [TRANSLATED]
     files_calc = list(in_root.rglob("calculation_edges.jsonl")) + list(in_root.rglob("calculation_edges.parquet"))
     files_def  = list(in_root.rglob("definition_arcs.jsonl"))  + list(in_root.rglob("definition_arcs.parquet"))
     files_lab  = list(in_root.rglob("labels.jsonl"))           + list(in_root.rglob("labels.parquet"))
 
     total = len(files_calc) + len(files_def) + len(files_lab)
     if total == 0:
-        print(f"[INFO] 在 {in_root} 未找到 calculation_edges/definition_arcs/labels")
+        print(f"[INFO] [TRANSLATED] {in_root} [TRANSLATED] calculation_edges/definition_arcs/labels")
         return
 
-    print(f"[INFO] 输入根：{in_root}")
-    print(f"[INFO] 输出根：{out_root}（镜像 processed 结构）")
-    print(f"[INFO] 发现：calc={len(files_calc)}, def={len(files_def)}, labels={len(files_lab)}")
+    print(f"[INFO] [TRANSLATED]：{in_root}")
+    print(f"[INFO] [TRANSLATED]：{out_root}（[TRANSLATED] processed [TRANSLATED]）")
+    print(f"[INFO] [TRANSLATED]：calc={len(files_calc)}, def={len(files_def)}, labels={len(files_lab)}")
 
     # 1) calculation_edges
     for i, p in enumerate(files_calc, 1):
@@ -381,12 +381,12 @@ def main():
             if args.dry_run:
                 print(f"    -> dry-run rows={len(cleaned)} dir={out_dir}")
                 continue
-            # 输出文件名固定
+            # [TRANSLATED]
             ok = try_write_parquet(cleaned, out_dir / "calculation_edges.parquet")
             save_jsonl(cleaned, out_dir / "calculation_edges.jsonl")
-            print(f"    -> 输出：{'calculation_edges.parquet, ' if ok else ''}calculation_edges.jsonl  rows={len(cleaned)}  dir={out_dir}")
+            print(f"    -> [TRANSLATED]：{'calculation_edges.parquet, ' if ok else ''}calculation_edges.jsonl  rows={len(cleaned)}  dir={out_dir}")
         except Exception as e:
-            print(f"    [WARN] 失败：{p}\n{e}")
+            print(f"    [WARN] [TRANSLATED]：{p}\n{e}")
 
     # 2) definition_arcs
     for i, p in enumerate(files_def, 1):
@@ -400,11 +400,11 @@ def main():
                 continue
             ok = try_write_parquet(cleaned, out_dir / "definition_arcs.parquet")
             save_jsonl(cleaned, out_dir / "definition_arcs.jsonl")
-            print(f"    -> 输出：{'definition_arcs.parquet, ' if ok else ''}definition_arcs.jsonl  rows={len(cleaned)}  dir={out_dir}")
+            print(f"    -> [TRANSLATED]：{'definition_arcs.parquet, ' if ok else ''}definition_arcs.jsonl  rows={len(cleaned)}  dir={out_dir}")
         except Exception as e:
-            print(f"    [WARN] 失败：{p}\n{e}")
+            print(f"    [WARN] [TRANSLATED]：{p}\n{e}")
 
-    # 3) labels → 优选映射（概念→标签）
+    # 3) labels → [TRANSLATED]（[TRANSLATED]→[TRANSLATED]）
     for i, p in enumerate(files_lab, 1):
         try:
             print(f"[labs {i}/{len(files_lab)}] {p}")
@@ -415,27 +415,27 @@ def main():
                 print(f"    -> dry-run best_rows={len(best_df)} wide_rows={len(wide_df)} dir={out_dir}")
                 continue
 
-            # 写 best
+            # [TRANSLATED] best
             ok1 = try_write_parquet(best_df, out_dir / "labels_best.parquet")
             save_jsonl(best_df, out_dir / "labels_best.jsonl")
 
-            # 写 wide（可选：如果为空仍写空文件，目录结构更稳定）
+            # [TRANSLATED] wide（[TRANSLATED]：[TRANSLATED]，[TRANSLATED]）
             ok2 = try_write_parquet(wide_df, out_dir / "labels_wide.parquet")
             save_jsonl(wide_df, out_dir / "labels_wide.jsonl")
 
-            # 兼容：labels.* 等同 best（方便你之前的 join 逻辑）
+            # [TRANSLATED]：labels.* [TRANSLATED] best（[TRANSLATED] join [TRANSLATED]）
             ok3 = try_write_parquet(best_df, out_dir / "labels.parquet")
             save_jsonl(best_df, out_dir / "labels.jsonl")
 
-            print(f"    -> 输出："
+            print(f"    -> [TRANSLATED]："
                 f"{'labels_best.parquet, ' if ok1 else ''}labels_best.jsonl; "
                 f"{'labels_wide.parquet, ' if ok2 else ''}labels_wide.jsonl; "
                 f"{'labels.parquet, ' if ok3 else ''}labels.jsonl  dir={out_dir}")
 
         except Exception as e:
-            print(f"    [WARN] 失败：{p}\n{e}")
+            print(f"    [WARN] [TRANSLATED]：{p}\n{e}")
 
-    print("[DONE] 全部完成。")
+    print("[DONE] [TRANSLATED]。")
 
 if __name__ == "__main__":
     main()

@@ -1,5 +1,5 @@
 #555
-##compact tables 从 HTML 抽出 <table> → 精简成 CSV/Markdown
+##compact tables [TRANSLATED] HTML [TRANSLATED] <table> → [TRANSLATED] CSV/Markdown
 from __future__ import annotations
 import argparse, json, re
 from io import StringIO
@@ -35,8 +35,8 @@ SYMBOL_MAP = {
     "€": "EUR",
     "£": "GBP",
     "¥": "JPY",
-    "元": "CNY",
-    "圆": "CNY",
+    "[TRANSLATED]": "CNY",
+    "[TRANSLATED]": "CNY",
     "￥": "CNY",
 }
 
@@ -94,7 +94,7 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
 
 def dataframe_from_html_table(html_table: str) -> Optional[pd.DataFrame]:
     try:
-        dfs = pd.read_html(StringIO(html_table))  # 用 StringIO 包裹
+        dfs = pd.read_html(StringIO(html_table))  # [TRANSLATED] StringIO [TRANSLATED]
         if not dfs:
             return None
         return max(dfs, key=lambda d: (d.shape[0], d.shape[1]))

@@ -1,10 +1,10 @@
 DATA_ROOT: "data/clean"
 TEXT_JOINER: "
-" # 多字段拼接时的分隔符
-MAX_CHUNK_CHARS: 4000 # 过长截断，避免超模长
+" # [TRANSLATED]
+MAX_CHUNK_CHARS: 4000 # [TRANSLATED]，[TRANSLATED]
 
 
-# 2) 元数据保留/检索过滤/打标签用的字段
+# 2) [TRANSLATED]/[TRANSLATED]/[TRANSLATED]
 METADATA_FIELDS:
 - file_type # text | fact | label | def | cal
 - ticker
@@ -24,17 +24,17 @@ METADATA_FIELDS:
 - instant
 - unit
 - concept
-- dimensions # 若有，多维度列表
+- dimensions # [TRANSLATED]，[TRANSLATED]
 
 
-# 3) 过滤与分面（前端筛选/统计）
+# 3) [TRANSLATED]（[TRANSLATED]/[TRANSLATED]）
 FACET_FIELDS: ["ticker", "form", "year", "file_type", "statement_hint"]
 NUMERIC_FIELDS: ["year", "fy"]
-DATE_FIELDS: ["period_start", "period_end", "instant"] # 自动解析为日期
+DATE_FIELDS: ["period_start", "period_end", "instant"] # [TRANSLATED]
 ARRAY_FIELDS: ["dimensions", "parent_concepts", "child_concepts"]
 
 
-# 允许的过滤操作（服务器按此白名单解析）
+# [TRANSLATED]（[TRANSLATED]）
 FILTER_SCHEMA:
 eq: ["ticker", "form", "file_type", "accno"]
 in: ["ticker", "form", "year"]
@@ -42,10 +42,10 @@ gte: ["year", "fy", "period_start", "instant"]
 lte: ["year", "fy", "period_end", "instant"]
 between: ["year", "fy", "period_start", "period_end"]
 contains: ["heading", "section", "item", "concept"]
-has: ["dimensions", "parent_concepts", "child_concepts"] # 数组字段包含
+has: ["dimensions", "parent_concepts", "child_concepts"] # [TRANSLATED]
 
 
-# 4) 字段别名（把你数据里的自定义列映射成统一名）
+# 4) [TRANSLATED]（[TRANSLATED]）
 FIELD_ALIASES:
 content: ["paragraph", "body", "desc"]
 text: ["paragraph", "body_text"]
@@ -54,21 +54,21 @@ value_display: ["val_disp", "value_str"]
 source_path: ["src", "path"]
 
 
-# 5) 去重与稳定主键
+# 5) [TRANSLATED]
 DEDUP:
 HASH_FIELDS: ["source_path", "accno", "content"]
 HASH_ALGO: "md5"
 DROP_EXACT_DUPES: true
 
 
-# 6) 索引策略
+# 6) [TRANSLATED]
 INDEX:
-mode: "faiss_hnsw" # faiss_hnsw | faiss_flat | milvus 等
+mode: "faiss_hnsw" # faiss_hnsw | faiss_flat | milvus [TRANSLATED]
 hnsw_M: 32
 hnsw_efConstruction: 200
 normalize: true
 BM25:
-enabled: true # 可加 BM25 倒排，做混检或冷启动
+enabled: true # [TRANSLATED] BM25 [TRANSLATED]，[TRANSLATED]
 top_k: 50
 RERANK:
 enabled: true

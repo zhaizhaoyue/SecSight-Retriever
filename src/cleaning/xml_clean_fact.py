@@ -30,12 +30,12 @@ def _parse_human_number(s: Any) -> float:
     txt = str(s).strip()
     if not txt:
         return np.nan
-    # 负号：括号 or 前缀 -
+    # [TRANSLATED]：[TRANSLATED] or [TRANSLATED] -
     neg = False
     if txt.startswith("(") and txt.endswith(")"):
         neg = True
         txt = txt[1:-1]
-    txt = txt.replace("\u00A0", " ").replace(",", "").replace("$", "").strip()  # nbsp/逗号/美元符
+    txt = txt.replace("\u00A0", " ").replace(",", "").replace("$", "").strip()  # nbsp/[TRANSLATED]/[TRANSLATED]
     m = re.match(r"^([+-]?\d+(?:\.\d+)?)(?:\s*([KkMmBbTt]))?$", txt)
     if not m:
         return np.nan
@@ -61,7 +61,7 @@ def _to_float(x: Any) -> float:
             xs = x.strip()
             if xs.lower() in ("true", "false", ""):
                 return np.nan
-            # 去掉千分位逗号与末尾 %
+            # [TRANSLATED] %
             xs2 = xs.replace(",", "")
             if xs2.endswith("%"):
                 xs2 = xs2[:-1]
@@ -103,14 +103,14 @@ def _mk_period_label(row: pd.Series) -> str:
     return "period:unknown"
 
 def _fmt_value(r: pd.Series) -> str:
-    # 优先数值渲染
+    # [TRANSLATED]
     v = r.get("value_num")
     unit_family = (r.get("unit_family") or "").strip().lower()
     if pd.notna(v):
-        # 如果是百分比（数值是小数），显示成人读格式
+        # [TRANSLATED]（[TRANSLATED]），[TRANSLATED]
         if unit_family == "percent":
             return f"{v*100:.6g}%"
-        # 货币或其他
+        # [TRANSLATED]
         av = abs(v)
         if av >= 1e12: return f"{v/1e12:.3f} T"
         if av >= 1e9:  return f"{v/1e9:.3f} B"
@@ -118,7 +118,7 @@ def _fmt_value(r: pd.Series) -> str:
         if av >= 1e3:  return f"{v/1e3:.3f} K"
         return f"{v:.6g}"
 
-    # 否则使用原始文本
+    # [TRANSLATED]
     raw = r.get("value_raw")
     if pd.notna(raw) and str(raw).strip():
         return str(raw).strip()
@@ -143,7 +143,7 @@ def _mk_rag_text(r: pd.Series) -> str:
 
 def _parse_dimensions(df: pd.DataFrame) -> pd.Series:
     """
-    从 dimensions_json / dimensions 列生成 dims_signature。
+    [TRANSLATED] dimensions_json / dimensions [TRANSLATED] dims_signature。
     """
     if "dimensions_json" in df.columns:
         def _from_json(x):
@@ -161,7 +161,7 @@ def _parse_dimensions(df: pd.DataFrame) -> pd.Series:
         def _from_dict(x):
             if isinstance(x, dict) and x:
                 return "|".join(f"{k}={v}" for k, v in sorted(x.items()))
-            # 有些解析器落了字符串
+            # [TRANSLATED]
             try:
                 if isinstance(x, str) and x.strip().startswith("{"):
                     obj = json.loads(x)
@@ -189,7 +189,7 @@ def read_table(path: Path) -> pd.DataFrame:
                 try:
                     recs.append(json.loads(line))
                 except Exception as e:
-                    print(f"    [WARN] {path.name} 第{i}行 JSON 解析失败：{e}")
+                    print(f"    [WARN] {path.name} [TRANSLATED]{i}[TRANSLATED] JSON [TRANSLATED]：{e}")
         return pd.DataFrame(recs)
     if suf == ".parquet":
         return pd.read_parquet(path)
@@ -202,7 +202,7 @@ def try_write_parquet(df: pd.DataFrame, out_path: Path) -> bool:
             return True
         except Exception:
             continue
-    print(f"    [WARN] 未安装 pyarrow/fastparquet，跳过写入 {out_path.name}")
+    print(f"    [WARN] [TRANSLATED] pyarrow/fastparquet，[TRANSLATED] {out_path.name}")
     return False
 
 def save_jsonl(df: pd.DataFrame, out_path: Path) -> None:
@@ -216,14 +216,14 @@ def save_jsonl(df: pd.DataFrame, out_path: Path) -> None:
 # -------------------------
 def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
     if facts_df is None or facts_df.empty:
-        print("    [SKIP] 空的 facts，跳过")
+        print("    [SKIP] [TRANSLATED] facts，[TRANSLATED]")
         return pd.DataFrame()
 
     df = facts_df.copy()
 
-    # ---------- 小工具 ----------
+    # ---------- [TRANSLATED] ----------
     def _parse_human_number(s: Any) -> float:
-        # 解析 "442.000 M"、"(565)"、"$2,825"、"12 K" 等
+        # [TRANSLATED] "442.000 M"、"(565)"、"$2,825"、"12 K" [TRANSLATED]
         if s is None or (isinstance(s, float) and np.isnan(s)):
             return np.nan
         txt = str(s).strip()
@@ -246,7 +246,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         return -val if neg else val
 
     def _dims_signature_from(row: pd.Series) -> str:
-        # 维度字典按 key 排序，拼 "key=value|..."；无维度返回空串
+        # [TRANSLATED] key [TRANSLATED]，[TRANSLATED] "key=value|..."；[TRANSLATED]
         dims = None
         if "dimensions_json" in row and pd.notna(row["dimensions_json"]):
             try:
@@ -291,7 +291,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         m = re.search(r"\d+", s)
         return int(m.group()) if m else None
 
-    # ---------- 字段对齐 / 兜底 ----------
+    # ---------- [TRANSLATED] / [TRANSLATED] ----------
     if "concept" not in df.columns and "qname" in df.columns:
         df["concept"] = df["qname"]
 
@@ -305,36 +305,36 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
     if "fq" not in df.columns and "period_fq" in df.columns:
         df["fq"] = df["period_fq"]
 
-    # value_raw / value_num 保持统一存在
+    # value_raw / value_num [TRANSLATED]
     if "value_raw" not in df.columns and "value_raw_clean" in df.columns:
         df["value_raw"] = df["value_raw_clean"]
     if "value_num" not in df.columns:
         df["value_num"] = np.nan
-    # 若 value 存在，先补到 value_num（有些管道把数值放在 value）
+    # [TRANSLATED] value [TRANSLATED]，[TRANSLATED] value_num（[TRANSLATED] value）
     if "value" in df.columns:
         mask_nan = df["value_num"].isna()
         df.loc[mask_nan, "value_num"] = df.loc[mask_nan, "value"]
 
-    # ---------- 数值归一（多重来源） ----------
-    # 1) value_num 自身 → 浮点
+    # ---------- [TRANSLATED]（[TRANSLATED]） ----------
+    # 1) value_num [TRANSLATED] → [TRANSLATED]
     df["value_num"] = df["value_num"].map(lambda x: float(x) if pd.notna(x) and str(x).strip().lower() not in ("true","false") else np.nan)
 
-    # 2) value 兜底（若存在）
+    # 2) value [TRANSLATED]（[TRANSLATED]）
     if "value" in df.columns:
         mask_nan = df["value_num"].isna()
         df.loc[mask_nan, "value_num"] = df.loc[mask_nan, "value"].map(lambda x: float(x) if pd.notna(x) and str(x).strip().lower() not in ("true","false") else np.nan)
 
-    # 3) value_raw 兜底（字符串数字）
+    # 3) value_raw [TRANSLATED]（[TRANSLATED]）
     if "value_raw" in df.columns:
         mask_nan = df["value_num"].isna()
         df.loc[mask_nan, "value_num"] = df.loc[mask_nan, "value_raw"].map(lambda x: _parse_human_number(x) if x is not None else np.nan)
 
-    # 4) value_display 最后兜底（"442.000 M" 等）
+    # 4) value_display [TRANSLATED]（"442.000 M" [TRANSLATED]）
     if "value_display" in df.columns:
         mask_nan = df["value_num"].isna()
         df.loc[mask_nan, "value_num"] = df.loc[mask_nan, "value_display"].map(_parse_human_number)
 
-    # 百分比归一（/100）
+    # [TRANSLATED]（/100）
     unit_family = (df["unit_family"].astype(str).str.lower() if "unit_family" in df.columns
                    else pd.Series([""] * len(df), index=df.index))
     concept_series = df["concept"].astype(str).str.lower() if "concept" in df.columns else pd.Series([""] * len(df), index=df.index)
@@ -355,7 +355,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
 
     # ---------- period / label / rag ----------
     if "period_label" not in df.columns:
-        # 用 _mk_period_label（若你有全局版本，也可以直接调用；这里就地实现）
+        # [TRANSLATED] _mk_period_label（[TRANSLATED]，[TRANSLATED]；[TRANSLATED]）
         def _mk_period_label_local(r: pd.Series) -> str:
             fy_i = _to_int_or_none(r.get("fy", r.get("period_fy")))
             inst = r.get("instant")
@@ -369,7 +369,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
             return "period:unknown"
         df["period_label"] = df.apply(_mk_period_label_local, axis=1)
 
-    # 归一化 FY/FQ（数字）
+    # [TRANSLATED] FY/FQ（[TRANSLATED]）
     df["fy_norm"] = df["fy"].map(_to_int_or_none) if "fy" in df.columns else None
     df["fq_norm"] = df["fq"].map(_to_int_or_none) if "fq" in df.columns else None
 
@@ -377,25 +377,25 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
     if "dims_signature" not in df.columns:
         df["dims_signature"] = df.apply(_dims_signature_from, axis=1)
 
-    # value_display（用归一后的 value_num 重新格式化）
+    # value_display（[TRANSLATED] value_num [TRANSLATED]）
     df["value_display"] = df["value_num"].map(_fmt_value_from_num)
 
     # rag_text
     df["rag_text"] = df.apply(_mk_rag_text, axis=1)
 
-    # ---------- decimals 归一 ----------
+    # ---------- decimals [TRANSLATED] ----------
     if "decimals" in df.columns:
         dec = pd.to_numeric(df["decimals"], errors="coerce")
         dec = dec.replace([np.inf, -np.inf], np.nan)
         try:
             df["decimals"] = pd.array(dec, dtype="Int64")
         except Exception:
-            df["decimals"] = dec  # 兜底
+            df["decimals"] = dec  # [TRANSLATED]
 
     
 
 
-    # ---------- 输出列 ----------
+    # ---------- [TRANSLATED] ----------
     base_keep = [
         "concept", "label_text",
         "value_raw", "value_num", "value_display", "rag_text",
@@ -405,7 +405,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         "unit_normalized", "unit_family", "statement_hint", "decimals",
         "context_id", "context", "dimensions", "dimensions_json", "dims_signature",
     ]
-    # 如果只有 unit 没有 unit_normalized，也保留 unit 方便追溯
+    # [TRANSLATED] unit [TRANSLATED] unit_normalized，[TRANSLATED] unit [TRANSLATED]
     if "unit_normalized" not in df.columns and "unit" in df.columns:
         base_keep.append("unit")
 
@@ -415,12 +415,12 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
             df.loc[is_textblock, col] = None
     if "unit" in df.columns:
         df.loc[is_textblock, "unit"] = None
-    # 占位的 value_display 已有就保留；若没有可以补：
+    # [TRANSLATED] value_display [TRANSLATED]；[TRANSLATED]：
     if "value_display" in df.columns:
         missing_disp = is_textblock & df["value_display"].isna()
         df.loc[missing_disp, "value_display"] = "[HTML TextBlock]"
 
-    # —— EPS/股本相关概念：统一为 income —— 
+    # —— EPS/[TRANSLATED]：[TRANSLATED] income —— 
     income_eps_mask = df["concept"].astype(str).str.contains(
         r"(?:EarningsPerShare|DilutedShares|BasicShares|AntidilutiveSecurities|WeightedAverageNumber)",
         case=False, regex=True, na=False
@@ -431,30 +431,30 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
     
     concept_s = df["concept"].astype(str)
 
-    # instant 行
+    # instant [TRANSLATED]
     inst_mask = df["instant"].notna() if "instant" in df.columns else pd.Series(False, index=df.index)
 
-    # 概念包含 Accumulated + Unrealized + (Gain|Loss)
+    # [TRANSLATED] Accumulated + Unrealized + (Gain|Loss)
     accum_unrealized_mask = concept_s.str.contains(
         r"Accumulated.*Unrealized.*(Gain|Loss)", case=False, regex=True, na=False
     )
 
-    # 维度包含 FV 层级轴（Balance 常见切片）
+    # [TRANSLATED] FV [TRANSLATED]（Balance [TRANSLATED]）
     fv_hier_mask = (
         df["dims_signature"].astype(str).str.contains("FairValueByFairValueHierarchyLevelAxis", na=False)
         if "dims_signature" in df.columns else pd.Series(False, index=df.index)
     )
 
-    # 覆盖为 balance（instant 且满足累计/层级条件任一）
+    # [TRANSLATED] balance（instant [TRANSLATED]/[TRANSLATED]）
     if "statement_hint" in df.columns:
         df.loc[inst_mask & (accum_unrealized_mask | fv_hier_mask), "statement_hint"] = "balance"
 
 
-    # —— 空维度签名统一为 None —— 
+    # —— [TRANSLATED] None —— 
     if "dims_signature" in df.columns:
         df["dims_signature"] = df["dims_signature"].replace({"": None})
 
-    # —— period 字段以 context 为准（避免与 context_id 内嵌日期不一致）
+    # —— period [TRANSLATED] context [TRANSLATED]（[TRANSLATED] context_id [TRANSLATED]）
     def _pick_period(row: pd.Series) -> pd.Series:
         ctx = row.get("context")
         per = {}
@@ -462,12 +462,12 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         if isinstance(ctx, dict):
             per = ctx.get("period") or {}
         elif isinstance(ctx, str):
-            # 可能是从 parquet 里读出来的 JSON 字符串
+            # [TRANSLATED] parquet [TRANSLATED] JSON [TRANSLATED]
             try:
                 obj = json.loads(ctx)
                 if isinstance(obj, dict):
                     per = obj.get("period") or {}
-                    # 顺便把 context 规范回 dict，后续就安全了
+                    # [TRANSLATED] context [TRANSLATED] dict，[TRANSLATED]
                     row["context"] = obj
             except Exception:
                 per = {}
@@ -483,18 +483,18 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         return row
     df = df.apply(_pick_period, axis=1)
 
-    # --- 清理“无维度”科目的维度信息（避免误挂 Axis 影响 RAG） ---
+    # --- [TRANSLATED]“[TRANSLATED]”[TRANSLATED]（[TRANSLATED] Axis [TRANSLATED] RAG） ---
     if "concept" in df.columns:
         _DIMENSIONLESS = [
             "us-gaap:CashAndCashEquivalentsAtCarryingValue",
             "us-gaap:MarketableSecuritiesCurrent",
             "us-gaap:MarketableSecuritiesNoncurrent",
-            # 如需可继续扩充：总资产/总负债/股东权益等汇总科目
+            # [TRANSLATED]：[TRANSLATED]/[TRANSLATED]/[TRANSLATED]
             # "us-gaap:Assets", "us-gaap:Liabilities", "us-gaap:StockholdersEquity",
         ]
         m_dimless = df["concept"].isin(_DIMENSIONLESS)
 
-        # 清空维度与签名
+        # [TRANSLATED]
         if "dimensions" in df.columns:
             df.loc[m_dimless, "dimensions"] = None
         if "dimensions_json" in df.columns:
@@ -502,12 +502,12 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         if "dims_signature" in df.columns:
             df.loc[m_dimless, "dims_signature"] = None
 
-        # 这些概念通常是资产负债表端（instant）；顺手统一 hint
+        # [TRANSLATED]（instant）；[TRANSLATED] hint
         if "instant" in df.columns and "statement_hint" in df.columns:
             df.loc[m_dimless & df["instant"].notna(), "statement_hint"] = "balance"
 
     
-    # —— 资产负债表优先级：对典型 Balance 概念做覆盖 —— 
+    # —— [TRANSLATED]：[TRANSLATED] Balance [TRANSLATED] —— 
     concept_s = df["concept"].astype(str)
 
     balance_like_mask = concept_s.str.contains(
@@ -520,13 +520,13 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
         , case=False, regex=True, na=False
     )
 
-    # 安全拿到 instant 的非空掩码
+    # [TRANSLATED] instant [TRANSLATED]
     instant_mask = df["instant"].notna() if "instant" in df.columns else pd.Series([False]*len(df), index=df.index)
     if isinstance(instant_mask, pd.Series):
         df.loc[instant_mask & balance_like_mask, "statement_hint"] = "balance"
 
 
-    # —— 明确覆盖已知科目（更保险） —— 
+    # —— [TRANSLATED]（[TRANSLATED]） —— 
     known_balance = concept_s.isin([
         "us-gaap:CashAndCashEquivalentsAtCarryingValue",
         "us-gaap:MarketableSecuritiesCurrent",
@@ -536,7 +536,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
 
     cols = [c for c in base_keep if c in df.columns]
     out = df.loc[:, cols].copy()
-    # 去重（概念+期间+维度+accno）
+    # [TRANSLATED]（[TRANSLATED]+[TRANSLATED]+[TRANSLATED]+accno）
     dedup_keys = [k for k in ["concept", "period_start", "period_end", "instant", "dims_signature", "accno"] if k in out.columns]
     if dedup_keys:
         out = out.drop_duplicates(subset=dedup_keys, keep="first")
@@ -548,7 +548,7 @@ def clean_one_facts_table(facts_df: pd.DataFrame) -> pd.DataFrame:
 # Scan inputs
 # -------------------------
 def iter_inputs(root: Path) -> Iterable[Path]:
-    # 优先读取 parquet（更快），再读 jsonl，二者都保留
+    # [TRANSLATED] parquet（[TRANSLATED]），[TRANSLATED] jsonl，[TRANSLATED]
     yield from root.rglob("facts.parquet")
     yield from root.rglob("facts.jsonl")
 
@@ -557,34 +557,34 @@ def iter_inputs(root: Path) -> Iterable[Path]:
 # -------------------------
 def main():
     ap = argparse.ArgumentParser(description="Batch clean facts (processed → clean, same structure)")
-    ap.add_argument("--root", type=str, default=None, help="输入根目录（默认 data/processed）")
-    ap.add_argument("--out", type=str, default=None, help="输出根目录（默认 data/clean）")
-    ap.add_argument("--dry-run", action="store_true", help="只扫描不写文件")
+    ap.add_argument("--root", type=str, default=None, help="[TRANSLATED]（[TRANSLATED] data/processed）")
+    ap.add_argument("--out", type=str, default=None, help="[TRANSLATED]（[TRANSLATED] data/clean）")
+    ap.add_argument("--dry-run", action="store_true", help="[TRANSLATED]")
     args = ap.parse_args()
 
     root = Path(args.root).expanduser().resolve() if args.root else DEFAULT_INPUT_DIR.resolve()
     out_root = Path(args.out).expanduser().resolve() if args.out else DEFAULT_OUTPUT_DIR.resolve()
 
     if not root.exists():
-        print(f"[INFO] 输入根目录不存在：{root}")
+        print(f"[INFO] [TRANSLATED]：{root}")
         return
 
     inputs = list(iter_inputs(root))
     if not inputs:
-        print(f"[INFO] 在 {root} 下未找到 facts.jsonl / facts.parquet")
+        print(f"[INFO] [TRANSLATED] {root} [TRANSLATED] facts.jsonl / facts.parquet")
         return
 
-    print(f"[INFO] 输入根目录：{root}")
-    print(f"[INFO] 输出根目录：{out_root}（与 processed 结构一致）")
-    print(f"[INFO] 待处理文件数：{len(inputs)}")
+    print(f"[INFO] [TRANSLATED]：{root}")
+    print(f"[INFO] [TRANSLATED]：{out_root}（[TRANSLATED] processed [TRANSLATED]）")
+    print(f"[INFO] [TRANSLATED]：{len(inputs)}")
 
     for i, facts_path in enumerate(inputs, 1):
         try:
-            print(f"[{i}/{len(inputs)}] 清洗：{facts_path}")
+            print(f"[{i}/{len(inputs)}] [TRANSLATED]：{facts_path}")
             facts_df  = read_table(facts_path)
             cleaned   = clean_one_facts_table(facts_df)
             if cleaned.empty:
-                print("    [SKIP] 空结果，跳过")
+                print("    [SKIP] [TRANSLATED]，[TRANSLATED]")
                 continue
 
             rel = facts_path.parent.relative_to(root)
@@ -600,12 +600,12 @@ def main():
 
             ok = try_write_parquet(cleaned, pq)
             save_jsonl(cleaned, jl)
-            print(f"    -> 输出：{'fact.parquet, ' if ok else ''}fact.jsonl  rows={len(cleaned)}  dir={out_dir}")
+            print(f"    -> [TRANSLATED]：{'fact.parquet, ' if ok else ''}fact.jsonl  rows={len(cleaned)}  dir={out_dir}")
 
         except Exception as e:
-            print(f"[WARN] 处理失败：{facts_path}\n{e}")
+            print(f"[WARN] [TRANSLATED]：{facts_path}\n{e}")
 
-    print("[DONE] 全部完成。")
+    print("[DONE] [TRANSLATED]。")
 
 if __name__ == "__main__":
     main()

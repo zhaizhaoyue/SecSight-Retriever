@@ -6,11 +6,11 @@ import pandas as pd
 
 CLEAN_ROOT_DEFAULT = Path("data/clean").resolve()
 FACT_CANDIDATES = ("fact.jsonl", "fact.parquet")
-SKIP_PREFIXES = ("fact", "text")     # 不处理以这些前缀命名的文件
-TARGET_SUFFIX = ".jsonl"             # 只处理 jsonl（如需兼容 parquet，可再扩展）
+SKIP_PREFIXES = ("fact", "text")     # [TRANSLATED]
+TARGET_SUFFIX = ".jsonl"             # [TRANSLATED] jsonl（[TRANSLATED] parquet，[TRANSLATED]）
 
 def read_fq_from_fact(dirp: Path):
-    """从 fact.jsonl 或 fact.parquet 读取 fq（容错 period_fq）。返回 (fq 或 None)。"""
+    """[TRANSLATED] fact.jsonl [TRANSLATED] fact.parquet [TRANSLATED] fq（[TRANSLATED] period_fq）。[TRANSLATED] (fq [TRANSLATED] None)。"""
     for name in FACT_CANDIDATES:
         fp = dirp / name
         if not fp.exists():
@@ -41,7 +41,7 @@ def read_fq_from_fact(dirp: Path):
     return None
 
 def patch_one_jsonl(path: Path, fq_value: str, force: bool=False) -> int:
-    """把 fq_value 写入单个 JSONL 文件。返回更新的行数。"""
+    """[TRANSLATED] fq_value [TRANSLATED] JSONL [TRANSLATED]。[TRANSLATED]。"""
     updated = 0
     out_lines = []
     with path.open("r", encoding="utf-8") as f:
@@ -67,8 +67,8 @@ def patch_one_jsonl(path: Path, fq_value: str, force: bool=False) -> int:
 
 def main():
     ap = argparse.ArgumentParser(description="Propagate fq from clean/fact.* to other JSONL files in the same clean directory.")
-    ap.add_argument("--root", default=str(CLEAN_ROOT_DEFAULT), help="clean 根目录（默认 data/clean）")
-    ap.add_argument("--force", action="store_true", help="强制覆盖已有 fq")
+    ap.add_argument("--root", default=str(CLEAN_ROOT_DEFAULT), help="clean [TRANSLATED]（[TRANSLATED] data/clean）")
+    ap.add_argument("--force", action="store_true", help="[TRANSLATED] fq")
     args = ap.parse_args()
 
     root = Path(args.root).resolve()
@@ -76,7 +76,7 @@ def main():
     total_files = 0
     total_rows = 0
 
-    # 遍历每个 filing 目录（包含 fact.jsonl / fact.parquet 的目录）
+    # [TRANSLATED] filing [TRANSLATED]（[TRANSLATED] fact.jsonl / fact.parquet [TRANSLATED]）
     for fact_path in list(root.rglob("fact.jsonl")) + list(root.rglob("fact.parquet")):
         dirp = fact_path.parent
         total_dirs += 1
@@ -87,7 +87,7 @@ def main():
         for target in dirp.glob("*" + TARGET_SUFFIX):
             name = target.name
             if any(name.startswith(pref) for pref in SKIP_PREFIXES):
-                continue  # 跳过 fact*.jsonl / text*.jsonl
+                continue  # [TRANSLATED] fact*.jsonl / text*.jsonl
             rows = patch_one_jsonl(target, fq, force=args.force)
             total_rows += rows
             total_files += 1

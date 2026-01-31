@@ -1,35 +1,35 @@
-# 独立数值检索Pipeline配置
-# 完全独立于RAG文本检索系统
+# [TRANSLATED]Pipeline[TRANSLATED]
+# [TRANSLATED]RAG[TRANSLATED]
 
-# 数据源配置
+# [TRANSLATED]
 data_sources:
-  # 主要数据源：结构化facts数据
+  # [TRANSLATED]：[TRANSLATED]facts[TRANSLATED]
   facts:
     enabled: true
     path: "data/processed"
     priority: 1
-    description: "GAAP标准化数值事实，高精度"
+    description: "GAAP[TRANSLATED]，[TRANSLATED]"
   
-  # 辅助数据源：表格数据
+  # [TRANSLATED]：[TRANSLATED]
   tables:
     enabled: true
     path: "data/compact_tables"
     priority: 2
-    description: "CSV表格数据，提供上下文和细分信息"
+    description: "CSV[TRANSLATED]，[TRANSLATED]"
   
-  # 备用数据源：原始报告
+  # [TRANSLATED]：[TRANSLATED]
   raw_reports:
-    enabled: false  # 暂时禁用，性能考虑
+    enabled: false  # [TRANSLATED]，[TRANSLATED]
     path: "data/raw_reports"
     priority: 3
-    description: "原始HTML/XML报告，完整但需要解析"
+    description: "[TRANSLATED]HTML/XML[TRANSLATED]，[TRANSLATED]"
 
-# 数据库配置
+# [TRANSLATED]
 database:
   type: "sqlite"
-  path: ":memory:"  # 使用内存数据库以提高性能
+  path: ":memory:"  # [TRANSLATED]
   
-  # 索引配置
+  # [TRANSLATED]
   indexes:
     - "facts(concept)"
     - "facts(ticker, period_fy)"
@@ -37,9 +37,9 @@ database:
     - "table_facts(ticker, year)"
     - "table_facts(row_header, col_header)"
 
-# 概念映射配置
+# [TRANSLATED]
 concept_mapping:
-  # 收入相关概念
+  # [TRANSLATED]
   revenue:
     gaap_concepts:
       - "us-gaap:Revenues"
@@ -50,7 +50,7 @@ concept_mapping:
       - "sales"
       - "net sales"
     
-  # 利润相关概念
+  # [TRANSLATED]
   net_income:
     gaap_concepts:
       - "us-gaap:NetIncomeLoss"
@@ -60,7 +60,7 @@ concept_mapping:
       - "profit"
       - "earnings"
   
-  # 资产相关概念
+  # [TRANSLATED]
   total_assets:
     gaap_concepts:
       - "us-gaap:Assets"
@@ -77,60 +77,60 @@ concept_mapping:
       - "cash"
       - "cash equivalents"
 
-# 查询配置
+# [TRANSLATED]
 query:
-  # 默认查询参数
+  # [TRANSLATED]
   defaults:
     max_results: 10
     timeout_seconds: 5
     
-  # 评分权重
+  # [TRANSLATED]
   scoring:
-    concept_match: 2.0      # 概念匹配得分
-    value_magnitude: 1.0    # 数值大小得分
-    source_quality: 1.5     # 数据源质量得分
-    context_relevance: 1.0  # 上下文相关性得分
+    concept_match: 2.0      # [TRANSLATED]
+    value_magnitude: 1.0    # [TRANSLATED]
+    source_quality: 1.5     # [TRANSLATED]
+    context_relevance: 1.0  # [TRANSLATED]
   
-  # 过滤器
+  # [TRANSLATED]
   filters:
-    min_value: null         # 最小数值过滤
-    max_value: null         # 最大数值过滤
-    required_units: []      # 必需单位
-    excluded_concepts: []   # 排除概念
+    min_value: null         # [TRANSLATED]
+    max_value: null         # [TRANSLATED]
+    required_units: []      # [TRANSLATED]
+    excluded_concepts: []   # [TRANSLATED]
 
-# 性能配置
+# [TRANSLATED]
 performance:
-  # 数据加载
-  batch_size: 1000          # 批量处理大小
-  max_files_per_load: 100   # 每次加载的最大文件数
+  # [TRANSLATED]
+  batch_size: 1000          # [TRANSLATED]
+  max_files_per_load: 100   # [TRANSLATED]
   
-  # 查询优化
-  use_query_cache: true     # 启用查询缓存
-  cache_size: 1000          # 缓存大小
-  parallel_queries: true    # 并行查询
+  # [TRANSLATED]
+  use_query_cache: true     # [TRANSLATED]
+  cache_size: 1000          # [TRANSLATED]
+  parallel_queries: true    # [TRANSLATED]
 
-# 日志配置
+# [TRANSLATED]
 logging:
   level: "INFO"
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
   
-  # 性能监控
-  log_query_time: true      # 记录查询时间
-  log_data_stats: true      # 记录数据统计
+  # [TRANSLATED]
+  log_query_time: true      # [TRANSLATED]
+  log_data_stats: true      # [TRANSLATED]
 
-# 验证配置
+# [TRANSLATED]
 validation:
-  # 数据质量检查
+  # [TRANSLATED]
   check_data_completeness: true
   min_facts_per_ticker: 10
   
-  # 结果验证
-  cross_validate_sources: true  # 交叉验证不同数据源
-  tolerance_percentage: 5.0     # 数值差异容忍度
+  # [TRANSLATED]
+  cross_validate_sources: true  # [TRANSLATED]
+  tolerance_percentage: 5.0     # [TRANSLATED]
 
-# 输出配置
+# [TRANSLATED]
 output:
-  format: "json"            # 输出格式
-  include_metadata: true    # 包含元数据
-  include_scores: true      # 包含评分信息
-  standardize_units: true   # 标准化单位
+  format: "json"            # [TRANSLATED]
+  include_metadata: true    # [TRANSLATED]
+  include_scores: true      # [TRANSLATED]
+  standardize_units: true   # [TRANSLATED]

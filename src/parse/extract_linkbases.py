@@ -11,13 +11,13 @@ from lxml import etree
 # ---- config loader (your project config.py) ----
 # ---- config loader (prefer project config.py; fallback to config.yaml or defaults) ----
 try:
-    # 如果项目里有 config.py，就直接用
+    # [TRANSLATED] config.py，[TRANSLATED]
     from config import cfg_get, get_path, ensure_dir
 except Exception:
     # minimal fallback if config.py isn't available
     import os
     try:
-        import yaml  # 可选
+        import yaml  # [TRANSLATED]
     except Exception:
         yaml = None
 
@@ -38,8 +38,8 @@ except Exception:
 
     def cfg_get(path: str, default: Any = None) -> Any:
         """
-        读取 config.yaml 中的嵌套键（点号路径），取不到就返回 default。
-        会把 ${project_root} 展开成实际路径。
+        [TRANSLATED] config.yaml [TRANSLATED]（[TRANSLATED]），[TRANSLATED] default。
+        [TRANSLATED] ${project_root} [TRANSLATED]。
         """
         cur: Any = _CFG
         for k in path.split("."):
@@ -52,7 +52,7 @@ except Exception:
 
     def get_path(path: str, default: Any = None) -> Path:
         """
-        返回 Path；如果配置没有该键，提供合理默认：
+        [TRANSLATED] Path；[TRANSLATED]，[TRANSLATED]：
           - data.standard -> <project>/data/raw_reports/standard
           - data.parsed   -> <project>/data/processed
         """
@@ -71,7 +71,7 @@ except Exception:
         p.mkdir(parents=True, exist_ok=True)
         return p
 
-# 允许点和连字符的 ticker；accno 允许各种 dash；docdate 用“最后 8 位数字”兜底
+# [TRANSLATED] ticker；accno [TRANSLATED] dash；docdate [TRANSLATED]“[TRANSLATED] 8 [TRANSLATED]”[TRANSLATED]
 DASH_CLASS = r"\-\u2010\u2011\u2012\u2013\u2014\u2212"  # -, ‐, ‒, –, —, −
 ACCNO_SEARCH_RE = re.compile(
     rf"(?<!\d)(\d{{10}})[{DASH_CLASS}](\d{{2}})[{DASH_CLASS}](\d{{6}})(?!\d)"
@@ -79,20 +79,20 @@ ACCNO_SEARCH_RE = re.compile(
 DATE8_RE = re.compile(r"(?<!\d)(\d{8})(?!\d)")
 FNAME_RE = re.compile(r"""
 ^
-(?:US_)?                                   # 可选 US_
+(?:US_)?                                   # [TRANSLATED] US_
 (?P<ticker>[A-Z0-9.\-]{1,12})_             # ticker
-(?P<year>\d{4})_                           # 年（来自文件名）
-(?P<form>10\-K|10\-Q|20\-F|40\-F|8\-K)_    # 表单
+(?P<year>\d{4})_                           # [TRANSLATED]（[TRANSLATED]）
+(?P<form>10\-K|10\-Q|20\-F|40\-F|8\-K)_    # [TRANSLATED]
 (?P<accno>\d{10}\-\d{2}\-\d{6})            # accession
-(?:_[A-Za-z0-9\-]+)?                       # 可选 slug，如 brka-20230630 的前缀
-(?:_(?P<docdate>\d{8}))?                   # 可选 docdate
-(?:_(?P<type>cal|def|pre|lab|htm))?        # 可选类型后缀
-\.xml$                                     # 结尾
+(?:_[A-Za-z0-9\-]+)?                       # [TRANSLATED] slug，[TRANSLATED] brka-20230630 [TRANSLATED]
+(?:_(?P<docdate>\d{8}))?                   # [TRANSLATED] docdate
+(?:_(?P<type>cal|def|pre|lab|htm))?        # [TRANSLATED]
+\.xml$                                     # [TRANSLATED]
 """, re.X | re.I)
 
 def make_outdir(outroot: Path, ticker, fy, form, accno) -> Path:
     t = (ticker or "UNKNOWN").upper()
-    # y 必须是字符串；fy 可能是 float/NaN
+    # y [TRANSLATED]；fy [TRANSLATED] float/NaN
     y = str(int(fy)) if (fy is not None and pd.notna(fy)) else "NA"
     f = (form or "NA").upper()
     a = accno or "ACCNO_NA"
@@ -129,19 +129,19 @@ def sniff_meta(p: Path) -> Dict[str, Any]:
         meta["doc_date"] = gd.get("docdate") or None
         meta["file_type"]= gd.get("type") or None
 
-    # accno 兜底（全路径扫描 + 规范化）
+    # accno [TRANSLATED]（[TRANSLATED] + [TRANSLATED]）
     if not meta["accno"]:
         ma = ACCNO_SEARCH_RE.search(name) or ACCNO_SEARCH_RE.search(str(p))
         if ma:
             meta["accno"] = f"{ma.group(1)}-{ma.group(2)}-{ma.group(3)}"
 
-    # doc_date 兜底：取文件名里出现的“最后一个 8 位数字”
+    # doc_date [TRANSLATED]：[TRANSLATED]“[TRANSLATED] 8 [TRANSLATED]”
     if not meta["doc_date"]:
         hits = DATE8_RE.findall(name)
         if hits:
             meta["doc_date"] = hits[-1]
 
-    # fy：优先用文件名 year；没有就退 doc_date[:4]
+    # fy：[TRANSLATED] year；[TRANSLATED] doc_date[:4]
     if meta["year"]:
         try:
             meta["fy"] = int(meta["year"])
@@ -203,7 +203,7 @@ def _loc_map(linknode: etree._Element) -> Dict[str, str]:
             locs[lab] = norm
     return locs
 
-from typing import Dict, List, Tuple, Any, Optional  # 顶部已导入 Tuple
+from typing import Dict, List, Tuple, Any, Optional  # [TRANSLATED] Tuple
 
 # ...
 
@@ -239,12 +239,12 @@ def parse_labels(lab_xml: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
     def norm_lang(lang: Optional[str]) -> Optional[str]:
         if not lang:
             return None
-        t = str(lang).strip().lower()        # ← 这里包一层 str()
+        t = str(lang).strip().lower()        # ← [TRANSLATED] str()
         return LANG_NORM.get(t, lang)
 
     for lblink in tree.findall(".//link:labelLink", namespaces=NSMAP):
         linkrole = lblink.get(f"{{{NSMAP['xlink']}}}role")
-        locs = _loc_map(lblink)              # ← 只算一次
+        locs = _loc_map(lblink)              # ← [TRANSLATED]
 
         res_by_label: Dict[str, Dict[str, Any]] = {}
         for lab in lblink.findall(".//link:label", namespaces=NSMAP):
@@ -261,7 +261,7 @@ def parse_labels(lab_xml: Path) -> Tuple[pd.DataFrame, pd.DataFrame]:
             dst = arc.get(f"{{{NSMAP['xlink']}}}to")
             if not src or not dst:
                 continue
-            concept = locs.get(src)          # ← 用缓存的 locs
+            concept = locs.get(src)          # ← [TRANSLATED] locs
             res     = res_by_label.get(dst)
             if not concept or not res:
                 continue
@@ -405,17 +405,17 @@ def main():
         dest="fmt",
         nargs="+",
         choices=["parquet","csv","jsonl"],
-        default=["parquet","jsonl"]   # 直接点运行就会导出这两种
+        default=["parquet","jsonl"]   # [TRANSLATED]
     )
     args = ap.parse_args()
 
     indir  = Path(args.indir).resolve() if args.indir else get_path("data.standard")
     outdir = Path(args.outdir).resolve() if args.outdir else get_path("data.parsed")
     outdir = ensure_dir(outdir)
-# 读取参数
-    fmts = args.fmt  # 这里是一个 list，如 ["parquet","jsonl"]
+# [TRANSLATED]
+    fmts = args.fmt  # [TRANSLATED] list，[TRANSLATED] ["parquet","jsonl"]
 
-    # 扫描
+    # [TRANSLATED]
     labs, cals, defs, pres = find_linkbases(indir)
     print(f"[scan] labs={len(labs)}, cals={len(cals)}, defs={len(defs)}, pres={len(pres)} in {indir}")
 
@@ -443,7 +443,7 @@ def main():
             for (ticker, fy, form, accno), g in all_long.groupby(["ticker","fy","form","accno"], dropna=False):
                 out_d = make_outdir(outdir, ticker, fy, form, accno)
                 print("[save labels]", out_d)
-                write_out(g, out_d, "labels", fmts)  # 长表
+                write_out(g, out_d, "labels", fmts)  # [TRANSLATED]
 
                 if not all_wide.empty:
                     need_cols = {
@@ -491,7 +491,7 @@ def main():
             for (ticker, fy, form, accno), g in all_df.groupby(["ticker","fy","form","accno"], dropna=False):
                 out_d = make_outdir(outdir, ticker, fy, form, accno)
                 print("[save cal]", out_d)
-                write_out(g, out_d, "calculation_edges", fmts)   # ← 这里！
+                write_out(g, out_d, "calculation_edges", fmts)   # ← [TRANSLATED]！
     else:
         print("[warn] no *_cal.xml found")
 
@@ -511,14 +511,14 @@ def main():
             for (ticker, fy, form, accno), g in all_df.groupby(["ticker","fy","form","accno"], dropna=False):
                 out_d = make_outdir(outdir, ticker, fy, form, accno)
                 print("[save def]", out_d)
-                write_out(g, out_d, "definition_arcs", fmts)     # ← 这里！
+                write_out(g, out_d, "definition_arcs", fmts)     # ← [TRANSLATED]！
     else:
         print("[warn] no *_def.xml found")
 
 
-# --- presentation（可选）---
+# --- presentation（[TRANSLATED]）---
 # if pres:
-#   同上：parse_presentation -> groupby -> write_out(..., "presentation_edges", fmts)
+#   [TRANSLATED]：parse_presentation -> groupby -> write_out(..., "presentation_edges", fmts)
 
 
     print("[done] linkbase extraction finished.")

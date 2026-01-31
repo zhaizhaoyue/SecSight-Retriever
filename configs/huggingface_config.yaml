@@ -6,7 +6,6 @@ models:
   llm:
     provider: "DeepSeek"
     model_name: "deepseek-chat"
-    api_key: "sk-b4f98bd0609246c2ba28f0eb0ad549ea"
     max_tokens: 4096
     temperature: 0.1
     

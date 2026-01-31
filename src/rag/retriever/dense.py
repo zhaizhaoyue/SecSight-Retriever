@@ -138,10 +138,10 @@ def fuse_scores(bm: Optional[List[float]], de: List[float], ce: Optional[List[fl
     a = float(alpha)
     return [a * ce_n[i] + (1.0 - a) * de_n[i] for i in range(len(de_n))]
 
-# ======================= NEW: DenseRetriever (最小改动抽类) =======================
+# ======================= NEW: DenseRetriever ([TRANSLATED]) =======================
 class DenseRetriever:
     """
-    可在程序内被 import 使用的检索器。保留与原 CLI 相同的行为与排序逻辑。
+    [TRANSLATED] import [TRANSLATED]。[TRANSLATED] CLI [TRANSLATED]。
     """
     def __init__(
         self,
@@ -158,21 +158,21 @@ class DenseRetriever:
         fusion: str = "ce",
         alpha: float = 0.6,
     ):
-        # 路径
+        # [TRANSLATED]
         self.index_dir = Path(index_dir)
         self.faiss_path = Path(faiss_path) if faiss_path else (self.index_dir / "text_index.faiss")
         self.meta_path  = Path(meta_path)  if meta_path  else (self.index_dir / "meta.jsonl")
         if not self.faiss_path.exists() or not self.meta_path.exists():
             raise FileNotFoundError(f"Missing files. faiss={self.faiss_path} meta={self.meta_path}")
 
-        # 载入索引与元数据
+        # [TRANSLATED]
         self.index = faiss.read_index(str(self.faiss_path))
         self.metas = load_metas(self.meta_path)
         if self.index.ntotal != len(self.metas):
             raise ValueError(f"index.ntotal={self.index.ntotal} != meta lines={len(self.metas)} (one-to-one required)")
         self.metric_type = getattr(self.index, "metric_type", faiss.METRIC_INNER_PRODUCT)
 
-        # 可选 IDMap
+        # [TRANSLATED] IDMap
         def _try_idmap_labels(index):
             try:
                 arr = faiss.vector_to_array(getattr(index, "id_map"))
@@ -182,13 +182,13 @@ class DenseRetriever:
         self.labels = _try_idmap_labels(self.index)
         self.label2meta = {int(lbl): self.metas[i] for i, lbl in enumerate(self.labels)} if self.labels is not None else None
 
-        # 编码器
+        # [TRANSLATED]
         try:
             self.enc = SentenceTransformer(model, device=device)
         except Exception:
             self.enc = SentenceTransformer(model, device="cpu")
 
-        # 运行参数（保持与原脚本一致）
+        # [TRANSLATED]（[TRANSLATED]）
         self.device = device
         self.normalize = bool(normalize)
         self.pretopk_mult = int(pretopk_mult)
@@ -212,7 +212,7 @@ class DenseRetriever:
         rerank_model: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         """
-        返回结构化结果列表（已按最终分数降序）：
+        [TRANSLATED]（[TRANSLATED]）：
         [{
            "rank": int,
            "final_score": float,
@@ -319,7 +319,7 @@ class DenseRetriever:
             })
         return records
 
-# ---------------- main (保持原CLI，但内部改用 DenseRetriever) ----------------
+# ---------------- main ([TRANSLATED]CLI，[TRANSLATED] DenseRetriever) ----------------
 def main():
     ap = argparse.ArgumentParser(description="Dense retriever with optional cross-encoder rerank")
     ap.add_argument("--index-dir", default="data/index", help="folder with text_index.faiss + meta.jsonl")
@@ -352,7 +352,7 @@ def main():
     ap.add_argument("--batch-size", type=int, default=16)
     ap.add_argument("--max-length", type=int, default=512)
 
-    # (可选) JSON 输出，便于 Hybrid 调用
+    # ([TRANSLATED]) JSON [TRANSLATED]，[TRANSLATED] Hybrid [TRANSLATED]
     ap.add_argument("--json-out", action="store_true", help="print JSON array records instead of pretty text")
     args = ap.parse_args()
 
@@ -390,7 +390,7 @@ def main():
         print(json.dumps(records, ensure_ascii=False))
         return
 
-    # 保持原有人类可读输出风格
+    # [TRANSLATED]
     print(f"Query: {args.query}")
     print("="*80)
     for r in records:

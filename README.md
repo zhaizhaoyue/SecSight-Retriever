@@ -103,10 +103,10 @@ Once the embedding stage has produced data/index/, the CLI can retrieve answers 
 python -m src.cli query   --query "What was Apple's 2022 revenue?"   --index-dir data/index   --chunk-dir data/chunked   --topk 5   --json-out
 `
 
-To add an LLM-generated summary, supply OpenAI-compatible credentials:
+To add an LLM-generated summary, supply the model details and enter the API key interactively when prompted:
 
 `
-python -m src.cli query   --query "Summarise management's discussion of inflation risks."   --index-dir data/index   --chunk-dir data/chunked   --llm-base-url https://api.openai.com/v1   --llm-model gpt-4o-mini   --llm-api-key sk-your-key   --json-out
+python -m src.cli query   --query "Summarise management's discussion of inflation risks."   --index-dir data/index   --chunk-dir data/chunked   --llm-base-url https://api.openai.com/v1   --llm-model gpt-4o-mini   --json-out
 `
 
 Use --dense-device cuda or --rerank-device cuda if GPU inference is available, and --loose-filters when you want to widen recall before applying ticker/form/year filters.

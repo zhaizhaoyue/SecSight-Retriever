@@ -29,14 +29,14 @@ def _strip_html(s: Optional[str]) -> str:
 
 def dump_parquet(path: Path, records: Iterable):
     if pd is None:
-        raise RuntimeError("pandas 未安装，无法导出 parquet。请 `pip install pandas pyarrow`")
+        raise RuntimeError("pandas [TRANSLATED]，[TRANSLATED] parquet。[TRANSLATED] `pip install pandas pyarrow`")
     path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame([r.model_dump() for r in records])
     df.to_parquet(path, index=False)
 
 def dump_csv(path: Path, records: Iterable):
     if pd is None:
-        raise RuntimeError("pandas 未安装，无法导出 CSV。请 `pip install pandas`")
+        raise RuntimeError("pandas [TRANSLATED]，[TRANSLATED] CSV。[TRANSLATED] `pip install pandas`")
     path.parent.mkdir(parents=True, exist_ok=True)
     df = pd.DataFrame([r.model_dump() for r in records])
     df.to_csv(path, index=False, encoding="utf-8")
@@ -383,15 +383,15 @@ class Fact(RecordBase):
 
     # Concepts and values
     qname: str
-    value: Decimal                           # 原始高精度值（保留）
-    unit: Optional[str] = None               # 原始/清洗后的单位（见映射逻辑）
+    value: Decimal                           # [TRANSLATED]（[TRANSLATED]）
+    unit: Optional[str] = None               # [TRANSLATED]/[TRANSLATED]（[TRANSLATED]）
     decimals: Optional[int] = None
 
     # Derived alignment columns (all optional for backward compatibility)
-    value_raw: Optional[str] = None          # 原始文本（如果能拿到）
-    value_num: Optional[float] = None        # 可计算的 float（百分比已/100）
-    value_display: Optional[str] = None      # 友好展示文本（K/M/B 等）
-    unit_normalized: Optional[str] = None    # 归一化单位：USD / shares / % / pure / ...
+    value_raw: Optional[str] = None          # [TRANSLATED]（[TRANSLATED]）
+    value_num: Optional[float] = None        # [TRANSLATED] float（[TRANSLATED]/100）
+    value_display: Optional[str] = None      # [TRANSLATED]（K/M/B [TRANSLATED]）
+    unit_normalized: Optional[str] = None    # [TRANSLATED]：USD / shares / % / pure / ...
     unit_family: Optional[str] = None        # currency / shares / percent / pure
     rag_text: Optional[str] = None           # label+value+period+meta
 
@@ -403,7 +403,7 @@ class Fact(RecordBase):
     period_start: Optional[str] = None
     period_end: Optional[str] = None
     instant: Optional[str] = None
-    period_label: Optional[str] = None       # ✅ 新增：FY.. instant.. 或 FY.. a→b
+    period_label: Optional[str] = None       # ✅ [TRANSLATED]：FY.. instant.. [TRANSLATED] FY.. a→b
 
     # Semantic hints
     statement_hint: Optional[StatementHint] = None
@@ -762,7 +762,7 @@ def _map_factinput_to_fact(fi: "FactInput") -> "Fact":
         # -- Fact core fields -- 
         qname       = fi.qname,
         value       = dec_value,
-        unit        = fi.unit or unit_norm,     # 若入参无 unit，用归一化后的
+        unit        = fi.unit or unit_norm,     # [TRANSLATED] unit，[TRANSLATED]
         decimals    = fi.decimals,
         context_id  = fi.context_id,
         context     = fi.context,

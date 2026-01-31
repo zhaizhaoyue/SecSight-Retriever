@@ -77,7 +77,7 @@ def audit_metas(metas: Sequence[Dict[str, Any]], strict: bool = False, tag: str 
 def fetch_contents(content_root: Optional[Path], rids: Sequence[str], strict_id: bool = True) -> Dict[str, str]:
     if not content_root or not rids: return {}
     wanted = set(rids); found: Dict[str, str] = {}
-    # 遍历 content_dir 下所有 jsonl，按 id 匹配文本
+    # [TRANSLATED] content_dir [TRANSLATED] jsonl，[TRANSLATED] id [TRANSLATED]
     for fp in ( [content_root] if content_root.is_file() else sorted(content_root.rglob("*.jsonl"), key=lambda x: (x.parent.as_posix(), x.name)) ):
         try:
             with fp.open("r", encoding="utf-8") as f:

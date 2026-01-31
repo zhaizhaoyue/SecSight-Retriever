@@ -63,7 +63,7 @@ class CrossEncoderReranker:
                 scores.extend(s)
         return scores
 
-# ---------------- content loader (全文抓取) ----------------
+# ---------------- content loader ([TRANSLATED]) ----------------
 def _iter_jsonl_files(base: Path) -> List[Path]:
     if base.is_file():
         return [base]
@@ -71,7 +71,7 @@ def _iter_jsonl_files(base: Path) -> List[Path]:
 
 def fetch_contents(content_root: Optional[Path], chunk_ids: Set[str]) -> Dict[str, str]:
     """
-    从 content_root 下的 jsonl 文件中按 id/chunk_id/chunkId 抓取全文 content/text/raw_text/page_text/body
+    [TRANSLATED] content_root [TRANSLATED] jsonl [TRANSLATED] id/chunk_id/chunkId [TRANSLATED] content/text/raw_text/page_text/body
     """
     if not content_root or not chunk_ids:
         return {}
@@ -104,7 +104,7 @@ def fetch_contents(content_root: Optional[Path], chunk_ids: Set[str]) -> Dict[st
             continue
     return found
 
-# ---------------- Hybrid (RRF + 全局 CE 重排) ----------------
+# ---------------- Hybrid (RRF + [TRANSLATED] CE [TRANSLATED]) ----------------
 class HybridRetrieverRRF:
     def __init__(self, bm25_cfg: BM25TextConfig, dense: DenseRetriever,
                      reranker: Optional[CrossEncoderReranker], k: float = 60.0, w_bm25: float = 2.0, w_dense: float = 2.0,
@@ -118,11 +118,11 @@ class HybridRetrieverRRF:
         self.ce_weight = float(ce_weight)
 
     def _rrf(self, bm25_results, dense_results, ce_candidates: int) -> List[Dict[str, Any]]:
-        # 名次表（从 1 开始）
+        # [TRANSLATED]（[TRANSLATED] 1 [TRANSLATED]）
         bm25_rank = {r["id"]: i+1 for i, r in enumerate(bm25_results)}
         dense_rank = {r["id"]: i+1 for i, r in enumerate(dense_results)}
 
-        # 合并候选（保留更长的 snippet，合并 meta）
+        # [TRANSLATED]（[TRANSLATED] snippet，[TRANSLATED] meta）
         pool: Dict[str, Dict[str, Any]] = {}
         def _upsert(results):
             for r in results:
@@ -132,7 +132,7 @@ class HybridRetrieverRRF:
                 if len(s) > len(rec["snippet"]):
                     rec["snippet"] = s
                 if isinstance(r.get("meta"), dict):
-                    # 右侧优先，避免丢失已有字段
+                    # [TRANSLATED]，[TRANSLATED]
                     rec["meta"] = {**rec["meta"], **r["meta"]}
 
         _upsert(bm25_results)
@@ -157,7 +157,7 @@ class HybridRetrieverRRF:
             })
 
         fused.sort(key=lambda x: x["rrf_score"], reverse=True)
-        # 给 CE 留更大的候选池
+        # [TRANSLATED] CE [TRANSLATED]
         return fused[:max(1, int(ce_candidates))]
 
     def _apply_filters(self, results: List[Dict[str, Any]], *, ticker: Optional[str], form: Optional[str], year: Optional[int]) -> List[Dict[str, Any]]:
@@ -187,12 +187,12 @@ class HybridRetrieverRRF:
             bm25_topk: int = 200, dense_topk: int = 200, ce_candidates: int = 256,
             strict_filters: bool = True,
             **filters) -> List[Dict[str, Any]]:
-        # 默认启用过滤
+        # [TRANSLATED]
         pass_filters = filters if strict_filters else {}
         bm25_results = self.bm25.search(query, topk=bm25_topk, **pass_filters) or []
         dense_results = self.dense.search(query, topk=dense_topk, content_path=content_path,
                                         content_dir=content_dir, **pass_filters) or []
-        # 检索后再做一次后置过滤，防止底层检索器不支持或元数据缺失
+        # [TRANSLATED]，[TRANSLATED]
         if strict_filters:
             bm25_results = self._apply_filters(bm25_results, ticker=filters.get("ticker"), form=filters.get("form"), year=filters.get("year"))
             dense_results = self._apply_filters(dense_results, ticker=filters.get("ticker"), form=filters.get("form"), year=filters.get("year"))
@@ -218,13 +218,13 @@ class HybridRetrieverRRF:
             ce_scores = [0.0] * len(fused)
         else:
             ce_scores = self.reranker.score(query, ce_docs)
-            # 归一化到 [0,1]，稳住与 RRF 的量纲
+            # [TRANSLATED] [0,1]，[TRANSLATED] RRF [TRANSLATED]
             lo, hi = min(ce_scores), max(ce_scores)
             if hi > lo:
                 ce_scores = [(s - lo) / (hi - lo) for s in ce_scores]
 
 
-        # 加权融合：将 RRF 和 CE 结果加权合并
+        # [TRANSLATED]：[TRANSLATED] RRF [TRANSLATED] CE [TRANSLATED]
         out: List[Dict[str, Any]] = []
         for rec, ce, doc in zip(fused, ce_scores, ce_docs):
             final_score = rec["rrf_score"] * (1 - self.ce_weight) + ce * self.ce_weight
@@ -232,7 +232,7 @@ class HybridRetrieverRRF:
                 "id": rec["id"],
                 "rrf_score": rec["rrf_score"],
                 "ce_score": float(ce),
-                "rerank_score": float(ce),   # 兼容旧字段
+                "rerank_score": float(ce),   # [TRANSLATED]
                 "rank_bm25": rec["rank_bm25"],
                 "rank_dense": rec["rank_dense"],
                 "snippet": rec["snippet"],
@@ -261,9 +261,9 @@ def _cli():
     ap.add_argument("--w-bm25", type=float, default=1.0)
     ap.add_argument("--w-dense", type=float, default=2.0)
     ap.add_argument("--ce-weight", type=float, default=0.5, help="weight for CE rerank (default=0.5)")
-    ap.add_argument("--bm25-topk", type=int, default=200, help="BM25候选条数（用于RRF融合前）")
-    ap.add_argument("--dense-topk", type=int, default=200, help="Dense候选条数（用于RRF融合前）")
-    ap.add_argument("--ce-candidates", type=int, default=256, help="送入CE的候选池大小")
+    ap.add_argument("--bm25-topk", type=int, default=200, help="BM25[TRANSLATED]（[TRANSLATED]RRF[TRANSLATED]）")
+    ap.add_argument("--dense-topk", type=int, default=200, help="Dense[TRANSLATED]（[TRANSLATED]RRF[TRANSLATED]）")
+    ap.add_argument("--ce-candidates", type=int, default=256, help="[TRANSLATED]CE[TRANSLATED]")
 
 
     # filters
@@ -312,7 +312,7 @@ def _cli():
 
         if title:
             print(f"     title: {title}")
-        # 内容预览
+        # [TRANSLATED]
         preview = (r.get("content") or r.get("snippet") or "").replace("\n", " ")
         print("     content:", preview[:args.show_chars])
         print("-" * 80)

@@ -1,18 +1,36 @@
 # run_answer_api_batch.ps1
 '''Usage:
-  # 建议先在 PowerShell 里设置一次 API key
-  $env:LLM_API_KEY="sk-f6220301c405405a8ca5c65a06a75f7b"
   Set-ExecutionPolicy -Scope Process Bypass
   .\run_answer_api_batch.ps1
+  (You will be prompted once for the API key.)
   '''
-# 所有输出会写到 logs\answer_api_<timestamp>.log
+
+# [TRANSLATED] logs\answer_api_<timestamp>.log
 [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $OutputEncoding = [System.Text.UTF8Encoding]::new($false)
 $env:PYTHONUTF8 = "1"
 $env:PYTHONIOENCODING = "utf-8"
 $ErrorActionPreference = "Stop"
 
-# 日志目录 & 文件
+# Prompt for the API key once per batch run
+$llmApiKey = $null
+while (-not $llmApiKey) {
+  $secureKey = Read-Host -Prompt "Enter LLM API key" -AsSecureString
+  if (-not $secureKey) {
+    Write-Warning "An API key is required to run the batch."
+    continue
+  }
+  $ptr = [Runtime.InteropServices.Marshal]::SecureStringToBSTR($secureKey)
+  try {
+    $llmApiKey = [Runtime.InteropServices.Marshal]::PtrToStringBSTR($ptr)
+  } finally {
+    if ($ptr -ne [System.IntPtr]::Zero) {
+      [Runtime.InteropServices.Marshal]::ZeroFreeBSTR($ptr)
+    }
+  }
+}
+
+# [TRANSLATED] & [TRANSLATED]
 $ts      = Get-Date -Format "yyyyMMdd_HHmmss"
 $logDir  = Join-Path (Get-Location) "logs"
 $logFile = Join-Path $logDir "answer_api_$ts.log"
@@ -73,7 +91,7 @@ $tests = @(
 
 
 
-# 公共参数
+# [TRANSLATED]
 $common = @(
   "-m", "src.rag.retriever.answer_api",
   "--index-dir", "data/index",
@@ -90,11 +108,11 @@ $common = @(
   "--form", "10-K",
   "--llm-base-url", "https://api.deepseek.com/v1",
   "--llm-model", "deepseek-chat",
-  "--llm-api-key", $env:LLM_API_KEY,
+  "--llm-api-key", $llmApiKey,
   "--json-out"
 )
 
-# 执行循环
+# [TRANSLATED]
 foreach ($t in $tests) {
   $sep = "--------------------------------------------------------------------------------"
   $hdr = ">>> Running {0} ({1})" -f $t.Ticker, $t.Year

@@ -53,10 +53,9 @@ python -m src.cli query `
     --ce-candidates 256 `
     --ce-weight 0.7 `
     --dense-device cuda `
-    --rerank-device cuda `
-    --llm-base-url https://api.deepseek.com/v1 `
-    --llm-model deepseek-chat `
-    --llm-api-key "sk-b4f98bd0609246c2ba28f0eb0ad549ea"
+--rerank-device cuda `
+--llm-base-url https://api.deepseek.com/v1 `
+--llm-model deepseek-chat `
 
 
 python -m src.cli query `
@@ -67,11 +66,10 @@ python -m src.cli query `
     --dense-topk 400 `
     --ce-candidates 256 `
     --ce-weight 0.7 `
-    --dense-device cuda `
-    --rerank-device cuda `
-    --llm-base-url https://api.deepseek.com/v1 `
-    --llm-model deepseek-chat `
-    --llm-api-key "sk-b4f98bd0609246c2ba28f0eb0ad549ea"
+--dense-device cuda `
+--rerank-device cuda `
+--llm-base-url https://api.deepseek.com/v1 `
+--llm-model deepseek-chat `
 
 '''
 
@@ -98,6 +96,7 @@ DEFAULT_EMBED_OUTPUT = Path("data/index")
 
 
 from src.rag.query_pipeline import QueryRequest, run_query as execute_query
+from src.utils.api_keys import prompt_for_api_key
 
 # ---------------------------------------------------------------------------
 # Utilities
@@ -377,6 +376,12 @@ STAGE_FUNCTIONS = {
 
 def command_query(args: argparse.Namespace) -> None:
     content_dir = Path(args.chunk_dir) if args.chunk_dir else None
+    llm_api_key = args.llm_api_key
+    if args.llm_base_url and args.llm_model and not llm_api_key:
+        llm_api_key = prompt_for_api_key(args.llm_model, required=False)
+        if not llm_api_key:
+            print("No API key entered; LLM answering will be skipped.")
+
     req = QueryRequest(
         query=args.query,
         index_dir=Path(args.index_dir),
@@ -399,7 +404,7 @@ def command_query(args: argparse.Namespace) -> None:
         year=args.year,
         llm_base_url=args.llm_base_url,
         llm_model=args.llm_model,
-        llm_api_key=args.llm_api_key,
+        llm_api_key=llm_api_key,
         max_context_tokens=args.max_context_tokens,
         strict_filters=not args.loose_filters,
     )
@@ -432,7 +437,7 @@ def command_query(args: argparse.Namespace) -> None:
                 print(f"  - {rid}: {quote}")
     else:
         print()
-        print("No LLM answer generated. Provide --llm-base-url/--llm-model/--llm-api-key to enable.")
+        print("No LLM answer generated. Provide --llm-base-url/--llm-model and enter an API key when prompted to enable.")
 
     if not result.records:
         print()
@@ -536,7 +541,7 @@ def build_parser() -> argparse.ArgumentParser:
     query_parser.add_argument("--year", type=int, help="Filter by filing year")
     query_parser.add_argument("--llm-base-url", help="OpenAI-compatible base URL for the answering model")
     query_parser.add_argument("--llm-model", help="LLM model identifier")
-    query_parser.add_argument("--llm-api-key", help="API key for the answering model")
+    query_parser.add_argument("--llm-api-key", help="API key for the answering model (omit to enter interactively)")
     query_parser.add_argument("--max-context-tokens", type=int, default=2400, help="Maximum tokens to feed into the LLM context")
     query_parser.add_argument("--snippet-chars", type=int, default=240, help="Number of characters to display per snippet when not using --json-out")
     query_parser.add_argument("--loose-filters", action="store_true", help="Apply filters only after retrieval (may increase recall)")

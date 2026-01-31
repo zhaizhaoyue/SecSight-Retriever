@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
-RAG Answerer — plugs HybridRetrieverRRF into an LLM (OpenAI-compatible or OpenAI).
-Usage example:
+RAG Answerer - plugs HybridRetrieverRRF into an OpenAI-compatible LLM.
+Usage example (you will be prompted for the API key when needed):
 
 python -m src.rag.retriever.answer_api `
   --query "What risks related to antitrust regulation did Apple highlight in its 2021" `
@@ -13,12 +13,12 @@ python -m src.rag.retriever.answer_api `
   --w-bm25 1.0 --w-dense 1.0 --ce-weight 0.65 `
   --llm-base-url https://api.deepseek.com/v1 `
   --llm-model deepseek-chat `
-  --llm-api-key "sk-f6220301c405405a8ca5c65a06a75f7b" `
   --json-out
+
 
 """
 from __future__ import annotations
-import os, json, re, argparse, math, textwrap
+import json, re, argparse, math, textwrap
 from dataclasses import dataclass
 from typing import List, Dict, Any, Optional, Tuple, Set
 
@@ -36,6 +36,7 @@ def _estimate_tokens(s: str) -> int:
 from src.rag.retriever.hybrid import HybridRetrieverRRF, CrossEncoderReranker
 from src.rag.retriever.bm25_text import BM25TextRetriever, BM25TextConfig
 from src.rag.retriever.dense import DenseRetriever
+from src.utils.api_keys import prompt_for_api_key
 
 @dataclass
 class Evidence:
@@ -163,10 +164,10 @@ def build_evidence_block(evs: List["Evidence"], max_chars_per_block: int = 1200,
         max_chars_per_block = 10**9 
 
     """
-    改进：
-    - 截断优先在句/要点边界（与 pack_evidence 共用 _sent_split）
-    - 保证首句尽量完整且不少于 _DEF_MIN_FIRST_SENT_TOKENS token（若可能）
-    - 仍保持原有输出格式
+    [TRANSLATED]：
+    - [TRANSLATED]/[TRANSLATED]（[TRANSLATED] pack_evidence [TRANSLATED] _sent_split）
+    - [TRANSLATED] _DEF_MIN_FIRST_SENT_TOKENS token（[TRANSLATED]）
+    - [TRANSLATED]
     """
     lines: List[str] = []
     for e in evs:
@@ -241,13 +242,13 @@ def pack_evidence(records: List[Dict[str, Any]],
                   mode: str = "max_coverage",
                   k_per_heading: int = 3) -> List[Evidence]:
     """
-    泛化增强版：
-    1) 轻去重：签名加入 (ticker, form, fy, heading) 盐 + per-sig 上限
-    2) 轻覆盖：对不同 heading 做保底，空 heading 限额更低
-    3) 软对齐：对锚 (ticker/form/fy) 的偏离使用指数衰减，参数可调
-    4) MMR：失败不提前 break；有句级回退；缓存分词/词集
-    5) 统一句级截断工具，与 build_evidence_block 一致
-    6) 更稳的 token 估计兜底
+    [TRANSLATED]：
+    1) [TRANSLATED]：[TRANSLATED] (ticker, form, fy, heading) [TRANSLATED] + per-sig [TRANSLATED]
+    2) [TRANSLATED]：[TRANSLATED] heading [TRANSLATED]，[TRANSLATED] heading [TRANSLATED]
+    3) [TRANSLATED]：[TRANSLATED] (ticker/form/fy) [TRANSLATED]，[TRANSLATED]
+    4) MMR：[TRANSLATED] break；[TRANSLATED]；[TRANSLATED]/[TRANSLATED]
+    5) [TRANSLATED]，[TRANSLATED] build_evidence_block [TRANSLATED]
+    6) [TRANSLATED] token [TRANSLATED]
     """
     if not records:
         return []
@@ -324,9 +325,9 @@ def pack_evidence(records: List[Dict[str, Any]],
 
     # Exponential decay parameters (configurable)
     if mode == "max_coverage":
-        YEAR_LAMBDA = 0.2  # 原来 0.6
-        TICKER_PENALTY = 0.8  # 原来 0.5
-        FORM_PENALTY   = 0.9  # 原来 0.8
+        YEAR_LAMBDA = 0.2  # [TRANSLATED] 0.6
+        TICKER_PENALTY = 0.8  # [TRANSLATED] 0.5
+        FORM_PENALTY   = 0.9  # [TRANSLATED] 0.8
     else:
         YEAR_LAMBDA = 0.6
         TICKER_PENALTY = 0.5
@@ -352,7 +353,7 @@ def pack_evidence(records: List[Dict[str, Any]],
 
     # ---------- 3) light dedup by signature ----------
     if mode == "max_coverage":
-        PER_SIG_CAP = 10  # 原来2
+        PER_SIG_CAP = 10  # [TRANSLATED]2
     else:
         PER_SIG_CAP = 2
     sig_count: Dict[str, int] = {}
@@ -392,15 +393,15 @@ def pack_evidence(records: List[Dict[str, Any]],
             selected.append(items[0])
             selected_sets.append(_wordset(txt0))
             cur_tokens += tks0
-     # ---------- 4.5) 按 heading 配额扩张 + 相邻 chunk 缝合 ----------
+     # ---------- 4.5) [TRANSLATED] heading [TRANSLATED] + [TRANSLATED] chunk [TRANSLATED] ----------
     def _rid_chunk_id(rid: str) -> Optional[int]:
         m = re.search(r"::text::chunk-(\d+)$", rid or "")
         return int(m.group(1)) if m else None
 
     def _stitch_adjacent(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        # 要求同一 filing、同一 heading、chunk 连号
+        # [TRANSLATED] filing、[TRANSLATED] heading、chunk [TRANSLATED]
         if not items: return items
-        # 先按 rid chunk id 排序
+        # [TRANSLATED] rid chunk id [TRANSLATED]
         items = sorted(items, key=lambda x: _rid_chunk_id(x.get("id","")) or 10**9)
         stitched: List[Dict[str, Any]] = []
         buf = []
@@ -411,7 +412,7 @@ def pack_evidence(records: List[Dict[str, Any]],
             if len(buf) == 1:
                 stitched.append(buf[0])
             else:
-                # 合并文本
+                # [TRANSLATED]
                 txt = "\n\n".join((it.get("content") or it.get("snippet") or "").strip() for it in buf)
                 merged = dict(buf[0]); merged["content"] = txt
                 stitched.append(merged)
@@ -420,7 +421,7 @@ def pack_evidence(records: List[Dict[str, Any]],
         for it in items:
             if not prev:
                 buf = [it]; prev = it; continue
-            # 同 heading + 同 filing 前缀 + chunk 连号才合并
+            # [TRANSLATED] heading + [TRANSLATED] filing [TRANSLATED] + chunk [TRANSLATED]
             h1 = (prev.get("meta") or {}).get("heading")
             h2 = (it.get("meta") or {}).get("heading")
             r1, r2 = prev.get("id",""), it.get("id","")
@@ -434,21 +435,21 @@ def pack_evidence(records: List[Dict[str, Any]],
         _flush()
         return stitched
 
-    # 在 heading_groups 构建后、MMR 前：
+    # [TRANSLATED] heading_groups [TRANSLATED]、MMR [TRANSLATED]：
     if mode == "max_coverage":
         expanded: List[Dict[str, Any]] = []
         for h, items in heading_groups.items():
             items.sort(key=lambda x: x["_boosted"], reverse=True)
-            # 取前 k_per_heading
+            # [TRANSLATED] k_per_heading
             pick = items[:k_per_heading]
-            # 缝合相邻
+            # [TRANSLATED]
             pick = _stitch_adjacent(pick)
             expanded.extend(pick)
-        # 与已选的 safeguard 去重合并（保留顺序）
+        # [TRANSLATED] safeguard [TRANSLATED]（[TRANSLATED]）
         seen = set(id(x) for x in selected)
         expanded = [x for x in expanded if id(x) not in seen]
         selected.extend(expanded)
-        # 跳过 MMR：remaining = []
+        # [TRANSLATED] MMR：remaining = []
         remaining = []
 
     # ---------- 5) MMR fill for remaining budget ----------
@@ -531,7 +532,7 @@ class LLMClient:
     def __init__(self, base_url: str, model: str, api_key: Optional[str] = None, timeout: int = 120):
         self.base_url = base_url.rstrip("/")
         self.model = model
-        self.api_key = api_key or os.getenv("OPENAI_API_KEY", "")
+        self.api_key = api_key or ""
         self.timeout = timeout
         # Prefer openai python SDK if available & base_url is OpenAI; else fallback to requests
         self._use_sdk = False
@@ -653,13 +654,18 @@ def main():
     ap.add_argument("--year", type=int)
 
     # LLM configs
-    ap.add_argument("--llm-base-url", default=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1"))
-    ap.add_argument("--llm-model", default=os.getenv("LLM_MODEL", "gpt-4o-mini"))
-    ap.add_argument("--llm-api-key", default=os.getenv("OPENAI_API_KEY", ""))
+    ap.add_argument("--llm-base-url", default="https://api.openai.com/v1")
+    ap.add_argument("--llm-model", default="gpt-4o-mini")
+    ap.add_argument("--llm-api-key", help="API key for the answering model (omit to enter interactively)")
     ap.add_argument("--max-context-tokens", type=int, default=2400)
     ap.add_argument("--json-out", action="store_true", help="Print JSON only (no pretty).")
 
     args = ap.parse_args()
+    llm_api_key = args.llm_api_key
+    if not llm_api_key:
+        llm_api_key = prompt_for_api_key(args.llm_model or "LLM", required=False)
+        if not llm_api_key:
+            print("Proceeding without an API key; ensure your endpoint accepts unauthenticated requests.")
 
     # init hybrid components (same as your hybrid CLI)
     bm25_cfg = BM25TextConfig(index_dir=args.index_dir)
@@ -688,7 +694,7 @@ def main():
     )
 
     # answer
-    llm = LLMClient(base_url=args.llm_base_url, model=args.llm_model, api_key=args.llm_api_key)
+    llm = LLMClient(base_url=args.llm_base_url, model=args.llm_model, api_key=llm_api_key)
     out = answer_with_llm(args.query, records, llm, max_ctx_tokens=args.max_context_tokens)
 
     if args.json_out:

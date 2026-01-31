@@ -76,7 +76,7 @@ def extract_facts(model_xbrl) -> List[Dict[str, Any]]:
         if concept is None:
             continue
         rec = {
-            "fact_oid": f.objectId(),                 # 会话内唯一
+            "fact_oid": f.objectId(),                 # [TRANSLATED]
             "qname": str(concept.qname),              # us-gaap:Revenues
             "value_raw": f.value,
             "is_numeric": bool(f.isNumeric),
